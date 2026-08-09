@@ -12,7 +12,7 @@ test("parses quoted env values without exposing them", () => {
 test("loads a provider-neutral model configuration", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ropiq-"));
   fs.writeFileSync(path.join(root, ".env.local"), "LLM_PROVIDER=anthropic\nLLM_BASE_URL=https://api.example\nLLM_MODEL=model-x\nBACKEND_TYPE=comfyui\nBACKEND_BASE_URL=http://127.0.0.1:8188\nROPIQ_PORT=9001\n");
-  const config = loadConfig(root, { PATH: process.env.PATH || "" });
+  const config = loadConfig(root, {}, {});
   assert.equal(config.llm.provider, "anthropic");
   assert.equal(config.llm.model, "model-x");
   assert.equal(config.backend.type, "comfyui");
@@ -29,7 +29,7 @@ test("persists guided settings without returning stored secrets", () => {
     extensions: { catalogUrl: "https://raw.githubusercontent.com/example/catalog/main/ropiq-catalog.json" },
     plugins: { cloudLifecycle: { statusUrl: "https://cloud.example/status", stopUrl: "https://cloud.example/stop", token: "cloud-secret" } },
   });
-  const config = loadConfig(projectRoot, { ROPIQ_DATA_DIR: dataRoot });
+  const config = loadConfig(projectRoot, { ROPIQ_DATA_DIR: dataRoot }, {});
   assert.equal(config.llm.model, "deepseek-chat");
   assert.equal(config.llm.apiKey, "secret");
   const safe = publicConfig(config);

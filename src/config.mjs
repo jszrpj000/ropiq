@@ -52,13 +52,13 @@ function settingEnv(settings) {
   };
 }
 
-export function loadConfig(projectRoot, overrides = {}) {
-  const dataRoot = dataRootFor({ ...process.env, ...overrides });
+export function loadConfig(projectRoot, overrides = {}, processEnv = process.env) {
+  const dataRoot = dataRootFor({ ...processEnv, ...overrides });
   const envPath = path.join(projectRoot, ".env.local");
   const fileEnv = fs.existsSync(envPath) ? parseEnv(fs.readFileSync(envPath, "utf8")) : {};
   const settings = readSettings(dataRoot);
   const storedEnv = Object.fromEntries(Object.entries(settingEnv(settings)).filter(([, value]) => value !== undefined && value !== null));
-  const env = { ...fileEnv, ...storedEnv, ...process.env, ...overrides };
+  const env = { ...fileEnv, ...storedEnv, ...processEnv, ...overrides };
   const port = Number.parseInt(env.ROPIQ_PORT || env.COMFY_AGENT_PORT || "8787", 10);
 
   return {
