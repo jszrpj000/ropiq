@@ -88,6 +88,10 @@ test("requires structured video and voice prompt contracts", () => {
   assert.match(video, /compiled/);
   const voice = studioPromptContract({ id: "voice_synthesis" });
   assert.match(voice, /voice_prompt/);
+  assert.match(voice, /scene_context/);
+  assert.match(voice, /emotional_cause/);
+  assert.match(voice, /emphasis/);
+  assert.match(voice, /tail_tone/);
   assert.match(voice, /compiled_instruction/);
   assert.match(voice, /真人声音/);
 });

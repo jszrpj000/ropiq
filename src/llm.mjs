@@ -49,7 +49,7 @@ export function studioPromptContract(stage) {
     return `视频任务强制结构：execution.jobs 必须是非空数组。每个任务必须包含 id、shot_id、source_image_ref、duration_seconds、fps 和 video_prompt。video_prompt 必须包含 positive、motion、camera、lighting_material、continuity、negative、compiled；compiled 要合并主体动作、环境运动、运镜、灯光材质和连续性约束，不能只写风格词。`;
   }
   if (["voice_synthesis", "product_voice"].includes(stage.id)) {
-    return `配音任务强制结构：execution.jobs 必须是非空数组。每个任务必须包含 id、line_id、shot_id、character_id、text、target_duration_seconds 和 voice_prompt。voice_prompt 必须包含 voice_profile、emotion、intensity、pace、pauses、pronunciation、restrictions、compiled_instruction；不得使用真人姓名或要求模仿未授权真人声音。`;
+    return `配音任务强制结构：execution.jobs 必须是非空数组。每个任务必须包含 id、line_id、shot_id、character_id、text、scene_context、emotional_cause、target_duration_seconds 和 voice_prompt。voice_prompt 必须包含 voice_profile、emotion、intensity、volume、pace、breath、pauses、emphasis、tail_tone、pronunciation、restrictions、compiled_instruction。停顿和重音要绑定具体字词或标点；发声参数要由场景和情绪原因推导；不得使用真人姓名或要求模仿未授权真人声音。`;
   }
   return "";
 }
