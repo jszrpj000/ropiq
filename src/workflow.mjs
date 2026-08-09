@@ -302,10 +302,15 @@ export function buildTrustedVideoCandidate(objectInfo, artifact, outputPrefix) {
 }
 
 export function buildTrustedVoiceCandidate(objectInfo, artifact, outputPrefix) {
-  const classType = objectInfo?.AILab_Qwen3TTSCustomVoice ? "AILab_Qwen3TTSCustomVoice" : "";
+  const classType = objectInfo?.AILab_Qwen3TTSCustomVoice
+    ? "AILab_Qwen3TTSCustomVoice"
+    : objectInfo?.FB_Qwen3TTSCustomVoice
+      ? "FB_Qwen3TTSCustomVoice"
+      : "";
   if (!classType || !objectInfo?.SaveAudio) return null;
   const speakers = enumChoices(objectInfo, classType, "speaker");
-  const modelSizes = enumChoices(objectInfo, classType, "model_size");
+  const modelInput = classType === "FB_Qwen3TTSCustomVoice" ? "model_choice" : "model_size";
+  const modelSizes = enumChoices(objectInfo, classType, modelInput);
   const languages = enumChoices(objectInfo, classType, "language");
   if (![speakers, modelSizes, languages].every((values) => values.length)) return null;
 
@@ -317,16 +322,24 @@ export function buildTrustedVoiceCandidate(objectInfo, artifact, outputPrefix) {
   const language = languages.find((value) => String(value).toLowerCase() === requestedLanguage.toLowerCase())
     || pickChoice(languages, [/^Chinese$/i, /^Auto$/i]) || languages[0];
   const modelSize = pickChoice(modelSizes, [/^1\.7B$/i]) || modelSizes[0];
+  const inputs = {
+    text: String(job.synthesis_text || job.text || "").slice(0, 5000),
+    speaker,
+    [modelInput]: modelSize,
+    language,
+    instruct: String(job.voice_prompt?.engine_instruction || job.voice_prompt?.compiled_instruction || "自然、清晰地表达").slice(0, 2000),
+    seed: Math.round(boundedNumber(job.seed, 42, 0, Number.MAX_SAFE_INTEGER)),
+  };
+  if (classType === "FB_Qwen3TTSCustomVoice") {
+    inputs.device = pickChoice(enumChoices(objectInfo, classType, "device"), [/^cuda$/i, /^auto$/i]);
+    inputs.precision = pickChoice(enumChoices(objectInfo, classType, "precision"), [/^bf16$/i, /^fp32$/i]);
+    if (!inputs.device || !inputs.precision) return null;
+    inputs.unload_model_after_generate = true;
+  } else {
+    inputs.unload_models = true;
+  }
   const workflow = {
-    "1": { class_type: classType, inputs: {
-      text: String(job.synthesis_text || job.text || "").slice(0, 5000),
-      speaker,
-      model_size: modelSize,
-      language,
-      instruct: String(job.voice_prompt?.engine_instruction || job.voice_prompt?.compiled_instruction || "自然、清晰地表达").slice(0, 2000),
-      unload_models: true,
-      seed: Math.round(boundedNumber(job.seed, 42, 0, Number.MAX_SAFE_INTEGER)),
-    } },
+    "1": { class_type: classType, inputs },
     "2": { class_type: "SaveAudio", inputs: { audio: ["1", 0], filename_prefix: outputPrefix } },
   };
   return {

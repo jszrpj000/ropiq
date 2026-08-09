@@ -200,3 +200,37 @@ test("builds a trusted local Qwen voice workflow with stable quality defaults", 
   assert.equal(validateWorkflow(candidate.workflow, info).valid, true);
   assert.equal(validateSelfHostedWorkflow(candidate.workflow).valid, true);
 });
+
+test("builds a trusted local Qwen voice workflow for FB nodes", () => {
+  const choice = (values) => [values, {}];
+  const info = {
+    FB_Qwen3TTSCustomVoice: {
+      input: {
+        required: {
+          text: ["STRING", {}], speaker: choice(["Ryan", "Serena", "Vivian"]),
+          model_choice: choice(["0.6B", "1.7B"]), device: choice(["auto", "cuda", "cpu"]),
+          precision: choice(["bf16", "fp32"]), language: choice(["Auto", "Chinese", "English"]),
+        },
+        optional: {
+          instruct: ["STRING", {}], unload_model_after_generate: ["BOOLEAN", {}], seed: ["INT", { min: 0 }],
+        },
+      },
+      output: ["AUDIO"],
+    },
+    SaveAudio: { input: { required: { audio: ["AUDIO", {}] }, optional: { filename_prefix: ["STRING", {}] } }, output: [], output_node: true },
+  };
+  const artifact = { execution: { jobs: [{
+    synthesis_text: "雨停了，我们安全了。", speaker: "Serena", language: "Chinese", seed: 9,
+    voice_prompt: { engine_instruction: "温和、克制，语速稍慢，句尾柔和落下" },
+  }] } };
+  const candidate = buildTrustedVoiceCandidate(info, artifact, "RopiqStudio/test-fb-voice");
+  assert.equal(candidate.workflow["1"].class_type, "FB_Qwen3TTSCustomVoice");
+  assert.equal(candidate.workflow["1"].inputs.model_choice, "1.7B");
+  assert.equal(candidate.workflow["1"].inputs.device, "cuda");
+  assert.equal(candidate.workflow["1"].inputs.precision, "bf16");
+  assert.equal(candidate.workflow["1"].inputs.unload_model_after_generate, true);
+  assert.equal(candidate.workflow["1"].inputs.text, "雨停了，我们安全了。");
+  assert.equal(candidate.workflow["2"].inputs.filename_prefix, "RopiqStudio/test-fb-voice");
+  assert.equal(validateWorkflow(candidate.workflow, info).valid, true);
+  assert.equal(validateSelfHostedWorkflow(candidate.workflow).valid, true);
+});
