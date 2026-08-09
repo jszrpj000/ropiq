@@ -203,8 +203,27 @@ pre { max-height: 420px; overflow: auto; padding: 13px; border: 1px solid var(--
 .capability-note { margin-bottom: 16px; padding: 10px 12px; border: 1px solid #2a424f; border-radius: 10px; background: #101e27; color: var(--muted); font-size: 11px; }
 .capability-note.ready { border-color: #28504e; color: var(--aqua); }
 .capability-note.missing { border-color: #5a4130; color: #e6a46b; }
+.studio-execution-panel { margin: 0 0 18px; padding: 15px; border: 1px solid #365260; border-radius: 12px; background: linear-gradient(145deg, #13242e, #0d1820); }
+.execution-plan-head { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
+.execution-plan-head strong { display: block; margin-top: 4px; font-size: 15px; }
+.studio-execution-panel > p { margin: 10px 0; }
+.studio-execution-panel details { margin-top: 9px; }
+.studio-execution-panel pre { max-height: 240px; }
+.studio-execution-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 .artifact-label { display: grid; gap: 7px; color: #96a5ae; font-size: 11px; }
 .artifact-label textarea { min-height: 310px; color: #bfd0d7; font: 12px/1.5 ui-monospace, Consolas, monospace; }
+.studio-runs-section { margin-top: 17px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.studio-run-list { display: grid; gap: 7px; margin-top: 9px; }
+.studio-run-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: #0a141b; }
+.studio-run-row strong, .studio-run-row small { display: block; }
+.studio-run-row small { margin-top: 2px; color: var(--muted); font-size: 9px; }
+.studio-run-state { display: grid; justify-items: end; gap: 6px; }
+.studio-run-status { color: var(--warm); font-size: 10px; }
+.studio-run-status.success { color: var(--aqua); }
+.studio-run-status.error { color: var(--danger); }
+.studio-run-sync { padding: 5px 8px; border-color: #365260; color: var(--muted); font-size: 9px; }
+.studio-output-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.studio-output-links a { padding: 4px 7px; border: 1px solid #28504e; border-radius: 7px; color: var(--aqua); text-decoration: none; font-size: 10px; }
 .studio-stage-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
 @media (max-width: 1080px) {

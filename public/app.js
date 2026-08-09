@@ -14,6 +14,7 @@ let studioProjects = [];
 let currentStudioType = "drama";
 let currentStudioProject = null;
 let selectedStudioStageId = "";
+let studioPendingExecution = null;
 
 async function api(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
@@ -340,7 +341,60 @@ function inferredStageCapability(stage, artifact) {
 function selectStudioStage(stageId) {
   if (!currentStudioProject) return;
   selectedStudioStageId = stageId;
+  if (studioPendingExecution?.stageId !== stageId) studioPendingExecution = null;
   renderStudioProject(currentStudioProject);
+}
+
+function renderStudioRuns(artifact) {
+  const target = document.querySelector("#studio-run-list");
+  target.replaceChildren();
+  const runs = [...(artifact?.execution?.runs || [])].reverse();
+  if (!runs.length) {
+    target.append(element("p", "muted", "暂无执行记录"));
+    return;
+  }
+  runs.slice(0, 8).forEach((run) => {
+    const row = element("div", "studio-run-row");
+    const copy = element("div", "");
+    copy.append(element("strong", "", run.title || `任务 ${run.promptId.slice(0, 8)}`), element("small", "", `${run.promptId} · ${new Date(run.updatedAt || run.submittedAt).toLocaleString()}`));
+    if (run.error) copy.append(element("small", "error", run.error));
+    if (run.outputs?.length) {
+      const links = element("div", "studio-output-links");
+      run.outputs.forEach((output, index) => {
+        const link = element("a", "", `下载输出 ${index + 1}`);
+        const params = new URLSearchParams({ filename: output.filename || "", subfolder: output.subfolder || "", type: output.type || "output" });
+        link.href = output.downloadUrl || `/api/output?${params}`;
+        link.target = "_blank";
+        link.rel = "noopener";
+        links.append(link);
+      });
+      copy.append(links);
+    }
+    const state = element("div", "studio-run-state");
+    state.append(element("span", `studio-run-status ${run.status || ""}`, run.status === "success" ? "已完成" : run.status === "error" ? "失败" : run.status === "running" ? "运行中" : "已提交"));
+    if (!new Set(["success", "error"]).has(run.status)) {
+      const sync = element("button", "studio-run-sync", "同步状态");
+      sync.type = "button";
+      sync.addEventListener("click", async () => {
+        sync.disabled = true;
+        await pollStudioExecution(currentStudioProject.id, selectedStudioStageId, run.promptId, true);
+        sync.disabled = false;
+      });
+      state.append(sync);
+    }
+    row.append(copy, state);
+    target.append(row);
+  });
+}
+
+function renderStudioExecutionPlan(plan) {
+  studioPendingExecution = { ...plan, projectId: currentStudioProject.id, stageId: selectedStudioStageId };
+  const panel = document.querySelector("#studio-execution-panel");
+  panel.hidden = false;
+  document.querySelector("#studio-execution-title").textContent = plan.recommended.title;
+  document.querySelector("#studio-execution-score").textContent = `${plan.recommended.validation.score}/100`;
+  document.querySelector("#studio-execution-reply").textContent = plan.reply || "节点图已通过本地校验，等待确认。";
+  document.querySelector("#studio-execution-workflow").textContent = JSON.stringify(plan.recommended.workflow, null, 2);
 }
 
 function renderStudioProject(project) {
@@ -371,6 +425,9 @@ function renderStudioProject(project) {
 
   const stage = project.stages.find((item) => item.id === selectedStudioStageId);
   const artifact = project.artifacts?.[stage.id];
+  if (!studioPendingExecution || studioPendingExecution.projectId !== project.id || studioPendingExecution.stageId !== stage.id) {
+    document.querySelector("#studio-execution-panel").hidden = true;
+  }
   document.querySelector("#studio-stage-order").textContent = `STAGE ${String(stage.order).padStart(2, "0")} · ${stage.executor.toUpperCase()}`;
   document.querySelector("#studio-stage-name").textContent = stage.name;
   document.querySelector("#studio-stage-instruction").textContent = stage.instruction;
@@ -382,8 +439,13 @@ function renderStudioProject(project) {
   capabilityNode.className = `capability-note ${capability.ready ? "ready" : "missing"}`;
   capabilityNode.textContent = capability.text;
   document.querySelector("#studio-artifact").value = artifact ? JSON.stringify(artifact, null, 2) : "";
+  renderStudioRuns(artifact);
   document.querySelector("#studio-action-result").textContent = stage.summary || "";
   document.querySelector("#studio-run-stage").textContent = ["complete", "specified", "stale", "error"].includes(stage.status) ? "重新生成当前阶段" : "生成当前阶段";
+  const prepareExecution = document.querySelector("#studio-prepare-execution");
+  prepareExecution.hidden = stage.executor !== "comfyui" || !artifact;
+  prepareExecution.disabled = !bootstrapData?.connected || stage.status === "running";
+  prepareExecution.title = bootstrapData?.connected ? "生成并校验可执行节点图" : "生成后端当前离线";
   renderStudioProjectList();
 }
 
@@ -448,6 +510,71 @@ async function runStudio(action, button) {
     if (/配置大模型/.test(error.message)) openSetup();
     if (currentStudioProject) await loadStudioProject(currentStudioProject.id);
   } finally {
+    button.disabled = false;
+  }
+}
+
+async function prepareStudioExecution(button) {
+  if (!currentStudioProject) return;
+  const result = document.querySelector("#studio-action-result");
+  button.disabled = true;
+  result.textContent = "正在根据阶段产物选择真实节点、模型并校验节点图…";
+  try {
+    const plan = await api(`/api/studio/projects/${currentStudioProject.id}/stages/${selectedStudioStageId}/prepare-execution`, { method: "POST", body: "{}" });
+    renderStudioExecutionPlan(plan);
+    result.textContent = `节点图已通过校验：${plan.recommended.validation.score}/100。请检查后确认执行。`;
+  } catch (error) {
+    result.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function pollStudioExecution(projectId, stageId, promptId, immediate = false) {
+  const result = document.querySelector("#studio-action-result");
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    if (!immediate || attempt > 0) await wait(2000);
+    try {
+      const data = await api(`/api/studio/projects/${projectId}/stages/${stageId}/runs/${promptId}/sync`, { method: "POST", body: "{}" });
+      if (data.completed) {
+        if (currentStudioProject?.id === projectId) {
+          currentStudioProject = data.project;
+          selectedStudioStageId = stageId;
+          renderStudioProject(data.project);
+        }
+        result.textContent = data.run.status === "success" ? `云端执行完成，已登记 ${data.run.outputs.length} 个输出。` : `云端执行失败：${data.run.error}`;
+        await refreshStudioProjects();
+        return;
+      }
+      result.textContent = `云端任务 ${promptId.slice(0, 8)} 正在运行…`;
+    } catch (error) {
+      result.textContent = `状态同步失败：${error.message}`;
+      return;
+    }
+  }
+  result.textContent = "任务仍在云端运行；项目已保存任务 ID，稍后可继续同步。";
+}
+
+async function confirmStudioExecution(button) {
+  if (!studioPendingExecution) return;
+  if (!window.confirm("确认发送这个已校验节点图？它会使用本地或云端 GPU，并可能产生费用。")) return;
+  button.disabled = true;
+  const result = document.querySelector("#studio-action-result");
+  result.textContent = "正在执行前重新校验并提交…";
+  try {
+    const pending = studioPendingExecution;
+    const confirmed = await api("/api/confirm", { method: "POST", body: JSON.stringify({ planId: pending.planId, approved: true }) });
+    const promptId = confirmed.result?.prompt_id;
+    if (!promptId || !confirmed.studioProject) throw new Error("云端没有返回有效任务 ID");
+    currentStudioProject = confirmed.studioProject;
+    studioPendingExecution = null;
+    renderStudioProject(currentStudioProject);
+    result.textContent = `任务 ${promptId.slice(0, 8)} 已提交，正在等待输出…`;
+    await pollStudioExecution(pending.projectId, pending.stageId, promptId);
+  } catch (error) {
+    result.textContent = error.message;
     button.disabled = false;
   }
 }
@@ -519,6 +646,8 @@ document.querySelector("#studio-save-artifact").addEventListener("click", async 
 });
 
 document.querySelector("#studio-run-stage").addEventListener("click", (event) => runStudio("stage", event.currentTarget));
+document.querySelector("#studio-prepare-execution").addEventListener("click", (event) => prepareStudioExecution(event.currentTarget));
+document.querySelector("#studio-confirm-execution").addEventListener("click", (event) => confirmStudioExecution(event.currentTarget));
 document.querySelector("#studio-run-next").addEventListener("click", (event) => runStudio("next", event.currentTarget));
 document.querySelector("#studio-new-project").addEventListener("click", showStudioCreate);
 
