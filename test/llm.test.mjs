@@ -90,8 +90,11 @@ test("requires structured video and voice prompt contracts", () => {
   assert.match(voice, /voice_prompt/);
   assert.match(voice, /scene_context/);
   assert.match(voice, /emotional_cause/);
+  assert.match(voice, /synthesis_text/);
+  assert.match(voice, /performance_beats/);
   assert.match(voice, /emphasis/);
   assert.match(voice, /tail_tone/);
   assert.match(voice, /compiled_instruction/);
+  assert.match(voice, /engine_instruction/);
   assert.match(voice, /真人声音/);
 });

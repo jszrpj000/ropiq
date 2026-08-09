@@ -181,9 +181,10 @@ export function validateWorkflow(workflow, objectInfo, systemStats = {}) {
   return { valid: errors.length === 0, score, errors, warnings, metrics: { outputNodes, maxPixels, maxFrames, maxBatch, maxSteps, vramGb } };
 }
 
-const externalGenerationNode = /(fluxkontextpro|replicate|falai|stabilityapi|openaiimage|dall.?e|gemini.*image|imagen\d*|kling|runway|hailuo|minimax.*video|vidu|luma.*(?:image|video)|veo\d*|jimeng|siliconflow|cloud.*(?:image|video)|api.*(?:image|video)|(?:image|video).*api)/i;
+const externalGenerationNode = /(fluxkontextpro|replicate|falai|stabilityapi|openaiimage|dall.?e|gemini.*image|imagen\d*|kling|runway|hailuo|minimax.*video|vidu|luma.*(?:image|video)|veo\d*|jimeng|siliconflow|cloud.*(?:image|video)|api.*(?:image|video)|(?:image|video).*api|(?:openai|elevenlabs|fish.?audio|minimax|azure|google|siliconflow).*(?:tts|speech)|(?:tts|speech).*(?:api|cloud))/i;
 const localLoaderNode = /(?:checkpoint|unet|diffusion|clip|vae|lora|controlnet|gguf).*(?:loader|load)|(?:loader|load).*(?:checkpoint|unet|diffusion|clip|vae|lora|controlnet|gguf)/i;
 const localModelFile = /\.(?:safetensors|ckpt|gguf|pt|pth|bin)$/i;
+const localTtsNode = /(?:qwen\d*.*tts|tts.*qwen|cosyvoice|indextts|fish.*speech)/i;
 
 export function validateSelfHostedWorkflow(workflow) {
   const errors = [];
@@ -192,11 +193,12 @@ export function validateSelfHostedWorkflow(workflow) {
     || Object.keys(node?.inputs || {}).some((name) => /api_?key|access_?key|secret_?key|bearer_?token|api_?token/i.test(name)));
   if (external) errors.push(`禁止使用外部付费/API 生成节点：${external.class_type}`);
 
-  const hasLocalModel = nodes.some((node) => localLoaderNode.test(String(node?.class_type || ""))
+  const hasLocalTts = nodes.some((node) => localTtsNode.test(String(node?.class_type || "")));
+  const hasLocalModel = hasLocalTts || nodes.some((node) => localLoaderNode.test(String(node?.class_type || ""))
     || Object.values(node?.inputs || {}).some((value) => typeof value === "string" && localModelFile.test(value)));
-  if (!hasLocalModel) errors.push("工作流没有本地模型加载器或本地模型文件，无法证明使用的是用户自己的 ComfyUI 算力");
+  if (!hasLocalModel) errors.push("工作流没有本地模型加载器、本地模型文件或受支持的本地 TTS 节点，无法证明使用的是用户自己的 ComfyUI 算力");
 
-  const hasSampler = nodes.some((node) => /sampler|sampling/i.test(String(node?.class_type || "")));
+  const hasSampler = hasLocalTts || nodes.some((node) => /sampler|sampling/i.test(String(node?.class_type || "")));
   if (!hasSampler) errors.push("工作流没有本地采样节点");
   return { valid: errors.length === 0, errors };
 }
@@ -296,6 +298,41 @@ export function buildTrustedVideoCandidate(objectInfo, artifact, outputPrefix) {
     rationale: "使用当前 ComfyUI 已安装的 Wan 本地模型；确认执行后才会把上一阶段关键帧上传为首帧，不调用外部生成 API。",
     workflow,
     sourceImageNodeId: "7",
+  };
+}
+
+export function buildTrustedVoiceCandidate(objectInfo, artifact, outputPrefix) {
+  const classType = objectInfo?.AILab_Qwen3TTSCustomVoice ? "AILab_Qwen3TTSCustomVoice" : "";
+  if (!classType || !objectInfo?.SaveAudio) return null;
+  const speakers = enumChoices(objectInfo, classType, "speaker");
+  const modelSizes = enumChoices(objectInfo, classType, "model_size");
+  const languages = enumChoices(objectInfo, classType, "language");
+  if (![speakers, modelSizes, languages].every((values) => values.length)) return null;
+
+  const job = artifact?.execution?.jobs?.[0] || artifact || {};
+  const requestedSpeaker = String(job.speaker || "");
+  const requestedLanguage = String(job.language || "Chinese");
+  const speaker = speakers.find((value) => String(value).toLowerCase() === requestedSpeaker.toLowerCase())
+    || pickChoice(speakers, [/^Serena$/i, /^Vivian$/i, /^Uncle_Fu$/i]) || speakers[0];
+  const language = languages.find((value) => String(value).toLowerCase() === requestedLanguage.toLowerCase())
+    || pickChoice(languages, [/^Chinese$/i, /^Auto$/i]) || languages[0];
+  const modelSize = pickChoice(modelSizes, [/^1\.7B$/i]) || modelSizes[0];
+  const workflow = {
+    "1": { class_type: classType, inputs: {
+      text: String(job.synthesis_text || job.text || "").slice(0, 5000),
+      speaker,
+      model_size: modelSize,
+      language,
+      instruct: String(job.voice_prompt?.engine_instruction || job.voice_prompt?.compiled_instruction || "自然、清晰地表达").slice(0, 2000),
+      unload_models: true,
+      seed: Math.round(boundedNumber(job.seed, 42, 0, Number.MAX_SAFE_INTEGER)),
+    } },
+    "2": { class_type: "SaveAudio", inputs: { audio: ["1", 0], filename_prefix: outputPrefix } },
+  };
+  return {
+    title: "Qwen3-TTS 1.7B 本地自然配音预览",
+    rationale: "固定角色音色与语言，使用稳定的本地 CustomVoice 节点和结构化表演指令，输出 FLAC；不调用外部语音 API。",
+    workflow,
   };
 }
 

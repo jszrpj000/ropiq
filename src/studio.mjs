@@ -14,7 +14,7 @@ const dramaStages = [
   ["prompt_engineering", "提示词", "llm", "为每个镜头生成正向、负向、参考资产、约束、种子策略和模型适配提示，不得编造未安装资源。"],
   ["image_generation", "图像生成", "comfyui", "生成关键帧和角色/场景参考图任务规格；优先低成本预览，再安排确认后的高质量任务。"],
   ["video_generation", "视频生成", "comfyui", "生成逐镜头视频任务规格，包含首尾帧、时长、帧率、动作幅度、一致性策略和失败降级方案。"],
-  ["voice_synthesis", "配音", "plugin:tts", "结合场景、情绪原因和潜台词，生成角色声线、音量、语速、呼吸、停顿、重音、尾音、发音词典和逐句配音任务；不得冒用未经授权的真人声音。"],
+  ["voice_synthesis", "配音", "comfyui", "结合场景、情绪原因和潜台词，生成角色声线、音量、语速、呼吸、停顿、重音、尾音、发音词典和逐句本地配音任务；不得冒用未经授权的真人声音。"],
   ["lip_sync", "口型", "plugin:lipsync", "生成逐镜头口型任务，绑定音频、人物、说话区间、脸部可见度、修复策略和质量阈值。"],
   ["audio_caption", "字幕/音效/音乐", "plugin:audio", "生成字幕时间轴、环境声、动作音效、音乐段落、响度和版权来源要求。"],
   ["editing", "剪辑", "plugin:editor", "生成剪辑时间线，安排镜头、音轨、字幕、转场、节奏、调色、画幅安全区和平台版本。"],
@@ -32,7 +32,7 @@ const productStages = [
   ["product_prompts", "提示词", "llm", "生成保持商品结构、包装文字和品牌颜色的提示词、约束和参考图策略。"],
   ["product_images", "商品图像", "comfyui", "生成商品增强、场景合成、关键帧和多画幅任务规格，优先保护包装与结构。"],
   ["product_video", "商品视频", "comfyui", "生成商品运镜、细节动画和场景视频任务规格，禁止改变产品真实属性。"],
-  ["product_voice", "旁白配音", "plugin:tts", "结合商品场景和传播意图，生成旁白声线、音量、语速、呼吸、停顿、重音、尾音、发音和逐句任务规格。"],
+  ["product_voice", "旁白配音", "comfyui", "结合商品场景和传播意图，生成旁白声线、音量、语速、呼吸、停顿、重音、尾音、发音和逐句本地配音任务。"],
   ["product_audio_caption", "字幕/音效/音乐", "plugin:audio", "生成卖点字幕、价格占位、音效、音乐、响度和版权来源要求。"],
   ["product_editing", "剪辑", "plugin:editor", "生成多平台剪辑时间线、品牌片尾、行动号召、横竖屏安全区和导出版本。"],
   ["product_qc", "广告质检", "llm", "检查商品真实性、包装文字、宣传合规、品牌一致性、字幕、声音和技术质量。"],
@@ -117,6 +117,24 @@ function compileVoicePrompt(prompt = {}, job = {}) {
   ].filter(Boolean).join("；");
 }
 
+function compileVoiceEngineInstruction(prompt = {}, job = {}) {
+  const beats = (job.performance_beats || []).map((beat) => {
+    const pause = Number(beat?.pause_after_ms) > 0 ? `，后停顿${Math.round(Number(beat.pause_after_ms))}毫秒` : "";
+    return `${promptPart(beat?.text)}${promptPart(beat?.delivery) ? `（${promptPart(beat.delivery)}${pause}）` : pause}`;
+  }).filter(Boolean);
+  return [
+    promptPart(prompt.voice_profile) && `使用${promptPart(prompt.voice_profile)}`,
+    promptPart(prompt.emotion) && `情绪为${promptPart(prompt.emotion)}`,
+    promptPart(prompt.intensity) && `强度${promptPart(prompt.intensity)}`,
+    promptPart(prompt.volume) && `音量${promptPart(prompt.volume)}`,
+    promptPart(prompt.pace) && `语速${promptPart(prompt.pace)}`,
+    promptPart(prompt.breath) && `呼吸${promptPart(prompt.breath)}`,
+    promptPart(prompt.emphasis) && `突出${promptPart(prompt.emphasis)}`,
+    promptPart(prompt.tail_tone) && `句尾${promptPart(prompt.tail_tone)}`,
+    beats.length && `节奏分段：${beats.join("；")}`,
+  ].filter(Boolean).join("；").slice(0, 2000);
+}
+
 export function compileStagePrompts(stageId, artifact) {
   if (!artifact || typeof artifact !== "object") return artifact;
   if (["prompt_engineering", "product_prompts"].includes(stageId)) {
@@ -139,6 +157,10 @@ export function compileStagePrompts(stageId, artifact) {
       const providedDuration = Number(job.target_duration_seconds || job.duration_seconds || job.target_duration || job.duration);
       const textLength = Array.from(String(job.text || "").replace(/\s+/g, "")).length;
       job.target_duration_seconds = providedDuration > 0 ? providedDuration : Math.max(1, Math.min(30, Math.round((textLength / 4) * 10) / 10));
+      job.synthesis_text = promptPart(job.synthesis_text || job.text);
+      job.language = promptPart(job.language) || "Chinese";
+      job.speaker = promptPart(job.speaker);
+      job.performance_beats = Array.isArray(job.performance_beats) ? job.performance_beats : [];
       job.scene_context = promptPart(job.scene_context || job.scene || job.context);
       job.emotional_cause = promptPart(job.emotional_cause || job.emotion_cause || job.character_state?.cause);
       job.voice_prompt.intensity = promptPart(job.voice_prompt.intensity || job.voice_prompt.intensity_level || job.intensity) || "中等";
@@ -148,6 +170,7 @@ export function compileStagePrompts(stageId, artifact) {
       job.voice_prompt.tail_tone = promptPart(job.voice_prompt.tail_tone || job.voice_prompt.ending) || "自然收束";
       for (const field of ["pauses", "emphasis", "pronunciation", "restrictions"]) job.voice_prompt[field] = promptList(job.voice_prompt[field]);
       job.voice_prompt.compiled_instruction = compileVoicePrompt(job.voice_prompt, job);
+      job.voice_prompt.engine_instruction = compileVoiceEngineInstruction(job.voice_prompt, job);
     }
   }
   return artifact;
@@ -183,9 +206,14 @@ export function validateStagePromptArtifact(stageId, artifact) {
     if (!Array.isArray(jobs) || jobs.length === 0) errors.push("配音阶段缺少 execution.jobs");
     for (const [index, job] of (jobs || []).entries()) {
       const label = `配音任务 ${index + 1}`;
-      for (const field of ["id", "line_id", "shot_id", "character_id", "text", "scene_context", "emotional_cause"]) if (!nonEmpty(job?.[field])) errors.push(`${label} 缺少 ${field}`);
+      for (const field of ["id", "line_id", "shot_id", "character_id", "text", "synthesis_text", "language", "speaker", "scene_context", "emotional_cause"]) if (!nonEmpty(job?.[field])) errors.push(`${label} 缺少 ${field}`);
       if (!(Number(job?.target_duration_seconds) > 0)) errors.push(`${label} 缺少有效 target_duration_seconds`);
-      for (const field of ["voice_profile", "emotion", "intensity", "volume", "pace", "breath", "tail_tone", "compiled_instruction"]) {
+      if (!Array.isArray(job?.performance_beats) || job.performance_beats.length === 0) errors.push(`${label} 缺少 performance_beats`);
+      for (const [beatIndex, beat] of (job?.performance_beats || []).entries()) {
+        if (!nonEmpty(beat?.text) || !nonEmpty(beat?.delivery)) errors.push(`${label} 的 performance_beats ${beatIndex + 1} 缺少 text 或 delivery`);
+        if (!(Number(beat?.pause_after_ms) >= 0)) errors.push(`${label} 的 performance_beats ${beatIndex + 1} 缺少有效 pause_after_ms`);
+      }
+      for (const field of ["voice_profile", "emotion", "intensity", "volume", "pace", "breath", "tail_tone", "compiled_instruction", "engine_instruction"]) {
         if (!nonEmpty(job?.voice_prompt?.[field])) errors.push(`${label} 缺少 voice_prompt.${field}`);
       }
       for (const field of ["pauses", "emphasis", "pronunciation", "restrictions"]) {
@@ -267,6 +295,9 @@ export class StudioStore {
   }
 
   withArtifacts(project) {
+    const definitions = STUDIO_PIPELINES[project.type]?.stages || [];
+    const current = new Map(definitions.map(([id, name, executor, instruction], index) => [id, { name, executor, instruction, order: index + 1 }]));
+    project.stages = project.stages.map((stage) => ({ ...stage, ...(current.get(stage.id) || {}) }));
     const artifacts = {};
     for (const stage of project.stages) {
       const file = this.artifactFile(project.id, stage.id);

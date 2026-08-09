@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedVideoCandidate, rankCandidates, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "../src/workflow.mjs";
+import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedVideoCandidate, buildTrustedVoiceCandidate, rankCandidates, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "../src/workflow.mjs";
 
 const objectInfo = {
   LoadImage: {
@@ -136,6 +136,15 @@ test("builds a trusted Z-Image workflow from installed local model choices", () 
   assert.equal(validateSelfHostedWorkflow(candidate.workflow).valid, true);
 });
 
+test("rejects external TTS API nodes for Studio execution", () => {
+  const result = validateSelfHostedWorkflow({
+    "1": { class_type: "ElevenLabsTTSApi", inputs: { text: "hello" } },
+    "2": { class_type: "SaveAudio", inputs: { audio: ["1", 0] } },
+  });
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join(" "), /外部付费\/API/);
+});
+
 test("builds a trusted Wan image-to-video workflow with a deferred source image", () => {
   const choice = (values) => [values, {}];
   const empty = { input: { required: {} } };
@@ -159,5 +168,35 @@ test("builds a trusted Wan image-to-video workflow with a deferred source image"
   assert.equal(candidate.workflow["7"].inputs.image, STUDIO_SOURCE_IMAGE_PLACEHOLDER);
   assert.equal(candidate.workflow["10"].inputs.length, 65);
   assert.equal(candidate.workflow["13"].inputs.filename_prefix, "RopiqStudio/test-video");
+  assert.equal(validateSelfHostedWorkflow(candidate.workflow).valid, true);
+});
+
+test("builds a trusted local Qwen voice workflow with stable quality defaults", () => {
+  const choice = (values) => [values, {}];
+  const info = {
+    AILab_Qwen3TTSCustomVoice: {
+      input: {
+        required: {
+          text: ["STRING", {}], speaker: choice(["Vivian", "Serena", "Uncle_Fu"]),
+          model_size: choice(["0.6B", "1.7B"]), language: choice(["Auto", "Chinese", "English"]),
+        },
+        optional: { instruct: ["STRING", {}], unload_models: ["BOOLEAN", {}], seed: ["INT", { min: -1 }] },
+      },
+      output: ["AUDIO"],
+    },
+    SaveAudio: { input: { required: { audio: ["AUDIO", {}] }, optional: { filename_prefix: ["STRING", {}] } }, output: [], output_node: true },
+  };
+  const artifact = { execution: { jobs: [{
+    text: "雨停了。", synthesis_text: "雨停了……我们安全了。", speaker: "Serena", language: "Chinese", seed: 9,
+    voice_prompt: { engine_instruction: "温和、克制，语速稍慢，句尾柔和落下" },
+  }] } };
+  const candidate = buildTrustedVoiceCandidate(info, artifact, "RopiqStudio/test-voice");
+  assert.equal(candidate.workflow["1"].class_type, "AILab_Qwen3TTSCustomVoice");
+  assert.equal(candidate.workflow["1"].inputs.model_size, "1.7B");
+  assert.equal(candidate.workflow["1"].inputs.speaker, "Serena");
+  assert.equal(candidate.workflow["1"].inputs.language, "Chinese");
+  assert.equal(candidate.workflow["1"].inputs.text, "雨停了……我们安全了。");
+  assert.equal(candidate.workflow["2"].inputs.filename_prefix, "RopiqStudio/test-voice");
+  assert.equal(validateWorkflow(candidate.workflow, info).valid, true);
   assert.equal(validateSelfHostedWorkflow(candidate.workflow).valid, true);
 });
