@@ -9,7 +9,7 @@ import { ExtensionRegistry } from "./src/extensions.mjs";
 import { LlmClient } from "./src/llm.mjs";
 import { skillSpectorStatus } from "./src/security.mjs";
 import { compileStagePrompts, StudioStore, STUDIO_PIPELINES, splitLongText, validateStagePromptArtifact } from "./src/studio.mjs";
-import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedVideoCandidate, rankCandidates, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "./src/workflow.mjs";
+import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedVideoCandidate, buildTrustedVoiceCandidate, rankCandidates, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "./src/workflow.mjs";
 
 const agentRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = agentRoot;
@@ -394,11 +394,13 @@ function stageCapability(stage, snapshot = null, connectionError = "") {
     return { executor: "llm", ready: llm.configured, missing: llm.configured ? [] : ["未配置大模型接口"] };
   }
   if (stage.executor === "comfyui") {
-    const ready = Boolean(config.backend.baseUrl && snapshot);
+    const voiceStage = ["voice_synthesis", "product_voice"].includes(stage.id);
+    const voiceReady = !voiceStage || Boolean(snapshot && buildTrustedVoiceCandidate(snapshot.objectInfo, {}, "RopiqStudio/capability"));
+    const ready = Boolean(config.backend.baseUrl && snapshot && voiceReady);
     return {
       executor: "comfyui",
       ready,
-      missing: ready ? [] : [connectionError || (config.backend.baseUrl ? "生成后端当前无法连接" : "未配置本地或云端节点图后端")],
+      missing: ready ? [] : [connectionError || (voiceStage && snapshot ? "当前节点图后端缺少兼容的本地 Qwen3-TTS CustomVoice 或 SaveAudio 节点" : (config.backend.baseUrl ? "生成后端当前无法连接" : "未配置本地或云端节点图后端"))],
       backend: snapshot ? summarizeSnapshot(snapshot) : null,
     };
   }
@@ -425,7 +427,12 @@ async function runStudioStage(projectId, stageId) {
       catch (error) { connectionError = error.message; }
     }
     const capability = stageCapability(stage, snapshot, connectionError);
-    if (snapshot) capability.nodeCatalog = buildNodeCatalog(snapshot.objectInfo, `${project.title} ${stage.name}`).slice(0, 120);
+    if (snapshot) {
+      const nodeQuery = ["voice_synthesis", "product_voice"].includes(stage.id)
+        ? `${project.title} qwen tts voice speech audio save`
+        : `${project.title} ${stage.name}`;
+      capability.nodeCatalog = buildNodeCatalog(snapshot.objectInfo, nodeQuery).slice(0, 120);
+    }
 
     let sourceReports = project.artifacts?.novel_analysis?.data?.source_reports
       || project.artifacts?.product_analysis?.data?.source_reports
@@ -490,7 +497,7 @@ async function prepareStudioExecution(projectId, stageId) {
 4. 不得执行，只返回 workflow 候选并等待人工确认。
 5. 不得引入阶段产物未授权的人物、品牌、声音、模型或素材。
 6. 禁止 FluxKontextPro、OpenAI、Gemini、Kling、Runway、Replicate、fal、Stability API 等任何外部付费/API 生成节点。
-7. 必须使用部署在当前 ComfyUI 内的本地模型加载器、模型文件和本地采样节点；图像工作流优先使用 UNETLoader、CLIPLoader、VAELoader、KSampler、VAEDecode、SaveImage 等真实可用节点。`;
+7. 必须使用部署在当前 ComfyUI 内的本地模型和节点；图像/视频使用本地加载与采样节点，配音使用本地 TTS 节点和 SaveAudio。`;
   const summary = summarizeSnapshot(snapshot);
   summary.approved_assets = listApprovedAssets();
   const selectedSkills = extensions.selectSkills(`${project.title} ${stage.name} ${artifactText}`);
@@ -500,16 +507,19 @@ async function prepareStudioExecution(projectId, stageId) {
     ? buildTrustedImageCandidate(snapshot.objectInfo, artifact, outputPrefix)
     : /video/i.test(stageId)
       ? buildTrustedVideoCandidate(snapshot.objectInfo, artifact, outputPrefix)
-      : null;
+      : /voice/i.test(stageId)
+        ? buildTrustedVoiceCandidate(snapshot.objectInfo, artifact, outputPrefix)
+        : null;
   if (/video/i.test(stageId)) {
     if (!trusted) throw new Error("当前 ComfyUI 缺少受信任的本地 Wan 图生视频节点或模型，请安装官方 Wan 2.1 I2V 依赖后重试");
     sourceOutput = studioSourceOutput(project, stageId);
   }
+  if (/voice/i.test(stageId) && !trusted) throw new Error("当前 ComfyUI 缺少受信任的本地 Qwen3-TTS CustomVoice 或 SaveAudio 节点，请安装兼容节点和本地模型后重试");
   const result = trusted
     ? { intent: "workflow", reply: "已根据当前 ComfyUI 中的本地模型和节点生成受信任工作流。", candidates: [trusted] }
     : await llm.plan({
       message,
-      catalog: buildNodeCatalog(snapshot.objectInfo, `${message} local model UNETLoader CLIPLoader VAELoader KSampler VAEDecode SaveImage ${artifactText}`),
+      catalog: buildNodeCatalog(snapshot.objectInfo, `${message} local model UNETLoader CLIPLoader VAELoader KSampler VAEDecode SaveImage Qwen TTS SaveAudio ${artifactText}`),
       summary,
       skills: selectedSkills,
       tools: extensions.tools().filter((tool) => tool.configured),

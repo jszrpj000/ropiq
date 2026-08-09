@@ -14,6 +14,8 @@ description: Convert dialogue, narration, and character lines into structured, n
 3. 选择 2–4 个最能表现变化的发声控制；避免把所有技巧堆入同一句。
 4. 把控制点绑定到具体字词或标点，并让目标时长与镜头时长相容。
 5. 使用原创或已获授权的声线描述，不以真人姓名代替声音特征。
+6. 按语义或情绪转折拆成短语块；每块只保留一个主要表演变化，避免把整段一次性合成。
+7. 固定同一角色的引擎音色、语言和声线描述；先生成单句预览，再批量生成。
 
 ## 必须输出的控制维度
 
@@ -27,6 +29,9 @@ description: Convert dialogue, narration, and character lines into structured, n
 - `tail_tone`：句尾的音高、力度与收束方式。
 - `pronunciation`：专名、数字、多音字和外语的读法。
 - `restrictions`：禁止模仿真人、禁止夸张失真等边界。
+- `synthesis_text`、`language`、`speaker`：交给引擎的文本、明确语言和已安装音色。
+- `performance_beats`：短语文本、局部表演方式和块后停顿毫秒数。
+- `engine_instruction`：只保留引擎能执行的声线、情绪和韵律控制，不把场景说明混入台词。
 
 ## 选择规则
 
@@ -38,3 +43,5 @@ description: Convert dialogue, narration, and character lines into structured, n
 - 怀疑或试探：减慢速度，在证据词前后留空，句尾可轻微悬置。
 
 最终 `compiled_instruction` 必须能直接交给配音引擎或配音演员，且不得添加剧本中不存在的事实。
+
+本地合成优先使用质量档、确定性生成和音色原生语言。短句先用稳定模式；只有在稳定版本过平时才尝试采样变化，并保留可复现种子。

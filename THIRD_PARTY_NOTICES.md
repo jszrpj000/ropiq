@@ -13,6 +13,11 @@ ComfyUI and Comfy Org names are used only to describe compatibility. They are no
 
 Users are responsible for obtaining external software and content from authorized sources and complying with each applicable license. Ropiq does not grant rights to any third-party software, model, node, template, workflow, media, or trademark.
 
+Ropiq can recognize a compatible Qwen3-TTS CustomVoice node and ComfyUI's audio output node when users install them separately. Neither Qwen3-TTS models nor community TTS nodes are included in Ropiq. Qwen and third-party node names identify optional compatibility only and do not imply affiliation or endorsement.
+
+- Qwen3-TTS project: <https://github.com/QwenLM/Qwen3-TTS> (Apache License 2.0)
+- Compatible community node implementation: <https://github.com/1038lab/ComfyUI-QwenTTS> (GNU GPL v3.0)
+
 ## Windows release runtime
 
 Official Windows release installers bundle the Node.js runtime so end users do not need a development environment. Node.js is distributed under the MIT license with additional notices for bundled dependencies. The complete upstream license text is installed as `runtime/NODE-LICENSE.txt`.

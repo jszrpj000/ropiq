@@ -2,7 +2,7 @@
 
 Ropiq is an independent, conversation-first agent for local generation workflows. A user describes the result they want; Ropiq reads the capabilities exposed by a user-configured backend, proposes candidate graphs, validates them locally, and recommends the best valid workflow.
 
-> Status: installable alpha. The guided configuration, 17-stage AI drama studio, 14-stage product-video studio, planning, extension selection, validation, approval, self-hosted image execution, compatible Wan 2.1 image-to-video previews, and result-sync loop work. Voice, lip-sync, and editing executor adapters remain roadmap items.
+> Status: installable alpha. The guided configuration, 17-stage AI drama studio, 14-stage product-video studio, planning, extension selection, validation, approval, self-hosted image execution, compatible Wan 2.1 image-to-video previews, compatible local Qwen3-TTS voice previews, and result-sync loop work. Lip-sync and editing executor adapters remain roadmap items.
 
 ## What works
 
@@ -22,6 +22,7 @@ Ropiq is an independent, conversation-first agent for local generation workflows
 - Studio image stages can assemble a trusted local Z-Image workflow when compatible models are installed, require approval, submit it to the user's backend, persist status/errors, and expose generated outputs for download.
 - Video and voice prompts are stored as editable structured fields and deterministically compiled before validation. Missing high-impact fields are rejected instead of silently invented.
 - Compatible video stages can assemble a trusted local Wan 2.1 image-to-video workflow. The previous successful keyframe is downloaded and uploaded as the source image only after explicit confirmation, then the complete graph is revalidated before submission.
+- Compatible voice stages can assemble a trusted local Qwen3-TTS CustomVoice workflow with a pinned language and speaker, phrase-level delivery beats, stable quality defaults, and FLAC output. The graph is revalidated and still requires explicit confirmation before submission.
 - A separate product-promotion workflow with factual-claim and brand-consistency checks.
 - TXT and Markdown import up to 400,000 characters, chunked source analysis, editable JSON artifacts, per-stage reruns, and automatic downstream invalidation.
 - Honest capability reporting: missing media plugins produce reviewable task specifications instead of fake completion claims.
@@ -30,7 +31,7 @@ Ropiq does not distribute or automatically start third-party runtimes, models, n
 
 ## Windows installer
 
-Download `Ropiq-Setup-0.4.0-alpha.5.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
+Download `Ropiq-Setup-0.4.0-alpha.6.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
 
 The alpha installer is not code-signed, so Windows may show an unknown-publisher warning. Verify the SHA-256 value published with the release before opening it.
 

@@ -3,7 +3,7 @@
 ## Alpha
 
 - Make the 17-stage AI drama studio and 14-stage product-video studio reliable across long projects.
-- Add local execution adapters for voice synthesis, lip sync, subtitles/audio, editing, and final mastering.
+- Add more local execution adapters for lip sync, subtitles/audio, editing, and final mastering; expand voice synthesis beyond the initial compatible Qwen3-TTS path.
 - Stabilize workflow generation against diverse user-installed node catalogs.
 - Add repair loops using backend validation and execution errors.
 - Show live progress and generated previews in chat.

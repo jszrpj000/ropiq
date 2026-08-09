@@ -54,8 +54,9 @@ test("validates compiled video and voice prompts", () => {
   }] } });
   assert.equal(video.valid, true);
   const voice = validateStagePromptArtifact("voice_synthesis", { execution: { jobs: [{
-    id: "voice-1", line_id: "line-1", shot_id: "shot-1", character_id: "narrator", text: "雨停了。", scene_context: "雨夜后的屋檐下", emotional_cause: "确认危险已经过去", target_duration_seconds: 2,
-    voice_prompt: { voice_profile: "原创温和中性声线", emotion: "克制", intensity: "low", volume: "轻", pace: "slow", breath: "稳定", pauses: [], emphasis: ["停"], tail_tone: "柔和落下", pronunciation: [], restrictions: ["不得模仿真人"], compiled_instruction: "温和、克制、慢速" },
+    id: "voice-1", line_id: "line-1", shot_id: "shot-1", character_id: "narrator", text: "雨停了。", synthesis_text: "雨停了……", language: "Chinese", speaker: "Serena", scene_context: "雨夜后的屋檐下", emotional_cause: "确认危险已经过去", target_duration_seconds: 2,
+    performance_beats: [{ text: "雨停了", delivery: "如释重负", pause_after_ms: 300 }],
+    voice_prompt: { voice_profile: "原创温和中性声线", emotion: "克制", intensity: "low", volume: "轻", pace: "slow", breath: "稳定", pauses: [], emphasis: ["停"], tail_tone: "柔和落下", pronunciation: [], restrictions: ["不得模仿真人"], compiled_instruction: "温和、克制、慢速", engine_instruction: "温和、克制、慢速" },
   }] } });
   assert.equal(voice.valid, true);
   assert.match(validateStagePromptArtifact("video_generation", { execution: { jobs: [{}] } }).errors.join(" "), /source_image_ref/);
@@ -79,7 +80,7 @@ test("deterministically compiles editable video and voice prompt fields", () => 
   assert.equal(video.execution.jobs[0].video_prompt.compiled, "橙色小船前进；动作与环境运动：水面轻柔波动；镜头：缓慢推进；灯光材质：湿润反光；连续性必须保持：船体颜色不变");
   assert.deepEqual(video.execution.jobs[0].video_prompt.continuity, ["船体颜色不变"]);
 
-  const voice = { execution: { jobs: [{ text: "雨停了", scene_context: "雨夜的屋檐下", emotional_cause: "终于确认同伴平安", voice_prompt: { voice_profile: "原创温和中性声线", emotion: "克制", pauses: ["逗号后停顿 0.2 秒"], emphasis: ["停"], pronunciation: [{ 雨: "yu3" }], restrictions: ["不得模仿真人"] } }] } };
+  const voice = { execution: { jobs: [{ text: "雨停了", language: "Chinese", speaker: "Serena", performance_beats: [{ text: "雨停了", delivery: "先松一口气", pause_after_ms: 250 }], scene_context: "雨夜的屋檐下", emotional_cause: "终于确认同伴平安", voice_prompt: { voice_profile: "原创温和中性声线", emotion: "克制", pauses: ["逗号后停顿 0.2 秒"], emphasis: ["停"], pronunciation: [{ 雨: "yu3" }], restrictions: ["不得模仿真人"] } }] } };
   compileStagePrompts("voice_synthesis", voice);
   assert.match(voice.execution.jobs[0].voice_prompt.compiled_instruction, /声线：原创温和中性声线/);
   assert.match(voice.execution.jobs[0].voice_prompt.compiled_instruction, /强度：中等/);
@@ -92,5 +93,19 @@ test("deterministically compiles editable video and voice prompt fields", () => 
   assert.match(voice.execution.jobs[0].voice_prompt.compiled_instruction, /语速：自然/);
   assert.match(voice.execution.jobs[0].voice_prompt.compiled_instruction, /发音：雨:yu3/);
   assert.match(voice.execution.jobs[0].voice_prompt.compiled_instruction, /限制：不得模仿真人/);
+  assert.match(voice.execution.jobs[0].voice_prompt.engine_instruction, /使用原创温和中性声线/);
+  assert.match(voice.execution.jobs[0].voice_prompt.engine_instruction, /节奏分段：雨停了（先松一口气，后停顿250毫秒）/);
+  assert.equal(voice.execution.jobs[0].synthesis_text, "雨停了");
+  assert.equal(voice.execution.jobs[0].language, "Chinese");
+  assert.equal(voice.execution.jobs[0].speaker, "Serena");
   assert.equal(voice.execution.jobs[0].target_duration_seconds, 1);
+});
+
+test("upgrades legacy voice stages to the local node-graph executor", () => {
+  const store = new StudioStore(fs.mkdtempSync(path.join(os.tmpdir(), "ropiq-studio-upgrade-")));
+  const project = store.create({ type: "drama", title: "Legacy", sourceText: "故事。" });
+  const raw = JSON.parse(fs.readFileSync(store.projectFile(project.id), "utf8"));
+  raw.stages.find((stage) => stage.id === "voice_synthesis").executor = "plugin:tts";
+  fs.writeFileSync(store.projectFile(project.id), JSON.stringify(raw));
+  assert.equal(store.get(project.id).stages.find((stage) => stage.id === "voice_synthesis").executor, "comfyui");
 });

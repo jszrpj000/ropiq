@@ -127,7 +127,7 @@ internal sealed class InstallForm : Form
         using (RegistryKey key = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Ropiq"))
         {
             key.SetValue("DisplayName", "Ropiq");
-            key.SetValue("DisplayVersion", "0.4.0-alpha.5");
+            key.SetValue("DisplayVersion", "0.4.0-alpha.6");
             key.SetValue("Publisher", "Ropiq Open Source Project");
             key.SetValue("InstallLocation", target);
             key.SetValue("UninstallString", "\"" + Path.Combine(target, "RopiqUninstall.exe") + "\"");
