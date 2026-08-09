@@ -4,15 +4,16 @@ export function parseJsonContent(content) {
   return JSON.parse(trimmed);
 }
 
-function systemPrompt(catalog, summary) {
+function systemPrompt(catalog, summary, skills = [], tools = [], availableExtensions = []) {
+  const skillText = skills.map((skill) => `## ${skill.name} (${skill.id})\n${skill.instructions}`).join("\n\n");
   return `你是 Ropiq 的生成工作流规划智能体。用户只描述目标，你负责基于当前连接后端的真实能力设计最佳方案。
 
 必须输出单个 JSON 对象，不得输出 Markdown。格式：
 {
   "reply": "给用户的简洁中文说明",
-  "intent": "workflow|status|interrupt|clear_queue|free_memory|upload_asset|download_output|help",
+  "intent": "workflow|plugin|extension_install|status|interrupt|clear_queue|free_memory|upload_asset|download_output|help",
   "assumptions": ["必要假设"],
-  "action": {"relative_path":"", "filename":"", "subfolder":"", "type":"output"},
+  "action": {"plugin_id":"", "tool":"", "extension_id":"", "relative_path":"", "filename":"", "subfolder":"", "type":"output"},
   "candidates": [{"title":"方案名", "rationale":"取舍", "workflow":{"1":{"class_type":"节点类型","inputs":{}}}}]
 }
 
@@ -23,9 +24,14 @@ function systemPrompt(catalog, summary) {
 4. 不得声称已执行。中断、清队列、释放显存、上传和生成都只提出动作，等待本地人工确认。
 5. 用户未给出的高影响创意参数写入 assumptions；普通采样参数选择保守稳定值。
 6. 回复及 JSON 字符串使用中文，提示词内容按所选模型的最佳语言填写。
+7. plugin 意图只能选择已配置工具。只读工具可自动调用；停止实例等 side_effect 工具必须等待本地确认。
+8. extension_install 只能选择 GitHub 扩展目录中存在的 extension_id；不得自己编造仓库、网址或校验值。
 
 当前环境摘要：${JSON.stringify(summary)}
-可用节点目录：${JSON.stringify(catalog)}`;
+可用节点目录：${JSON.stringify(catalog)}
+可用插件工具：${JSON.stringify(tools)}
+GitHub 可安装扩展目录：${JSON.stringify(availableExtensions)}
+本次自动启用的 Skills：\n${skillText || "（无匹配 Skill）"}`;
 }
 
 function normalizeMessages(history, userMessage) {
@@ -93,9 +99,9 @@ export class LlmClient {
     throw new Error(`不支持的 LLM_PROVIDER: ${this.config.provider}`);
   }
 
-  async plan({ message, history = [], catalog, summary }) {
+  async plan({ message, history = [], catalog, summary, skills = [], tools = [], availableExtensions = [] }) {
     if (!this.configured) throw new Error("请配置 LLM_BASE_URL 和 LLM_MODEL");
-    const system = systemPrompt(catalog, summary);
+    const system = systemPrompt(catalog, summary, skills, tools, availableExtensions);
     const messages = normalizeMessages(history, message);
     let lastError;
     for (let attempt = 0; attempt < 2; attempt += 1) {

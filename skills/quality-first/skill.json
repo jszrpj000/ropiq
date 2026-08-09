@@ -1,0 +1,8 @@
+{
+  "id": "quality-first",
+  "name": "质量优先",
+  "version": "1.0.0",
+  "description": "为图像和视频任务选择稳定、质量优先的参数。",
+  "keywords": ["高清", "质量", "细节", "产品", "修复", "放大"],
+  "always": true
+}

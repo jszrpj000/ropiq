@@ -3,21 +3,38 @@ import path from "node:path";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./src/config.mjs";
+import { loadConfig, publicConfig, saveSettings } from "./src/config.mjs";
 import { ComfyUiClient, summarizeSnapshot } from "./src/comfyui.mjs";
+import { ExtensionRegistry } from "./src/extensions.mjs";
 import { LlmClient } from "./src/llm.mjs";
+import { skillSpectorStatus } from "./src/security.mjs";
 import { buildNodeCatalog, rankCandidates, validateWorkflow } from "./src/workflow.mjs";
 
 const agentRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = agentRoot;
 const publicRoot = path.join(agentRoot, "public");
-const config = loadConfig(projectRoot);
-if (config.backend.type !== "comfyui") throw new Error(`暂不支持的 BACKEND_TYPE: ${config.backend.type}`);
-const backend = new ComfyUiClient(config.backend);
-const llm = new LlmClient(config.llm);
+let config;
+let backend;
+let llm;
+let extensions;
 const plans = new Map();
 const sessions = new Map();
 let snapshotCache = null;
+let catalogCache = null;
+
+function applyConfig() {
+  config = loadConfig(projectRoot);
+  if (config.backend.type !== "comfyui") throw new Error(`暂不支持的 BACKEND_TYPE: ${config.backend.type}`);
+  backend = new ComfyUiClient(config.backend);
+  llm = new LlmClient(config.llm);
+  extensions = new ExtensionRegistry({ projectRoot, dataRoot: config.dataRoot, pluginConfig: config.plugins });
+  fs.mkdirSync(path.join(config.dataRoot, "assets", "approved"), { recursive: true });
+  fs.mkdirSync(path.join(config.dataRoot, "runs"), { recursive: true });
+  snapshotCache = null;
+  catalogCache = null;
+}
+
+applyConfig();
 
 function sendJson(response, status, payload) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
@@ -74,7 +91,7 @@ function remember(session, role, content) {
 }
 
 function listApprovedAssets() {
-  const root = path.resolve(projectRoot, "assets", "approved");
+  const root = path.resolve(config.dataRoot, "assets", "approved");
   const allowed = new Set([".png", ".jpg", ".jpeg", ".webp"]);
   const results = [];
   function walk(directory) {
@@ -90,7 +107,7 @@ function listApprovedAssets() {
 }
 
 function approvedAssetPath(relativePath) {
-  const root = path.resolve(projectRoot, "assets", "approved");
+  const root = path.resolve(config.dataRoot, "assets", "approved");
   const resolved = path.resolve(root, String(relativePath || ""));
   if (!resolved.startsWith(`${root}${path.sep}`) || !fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
     throw new Error("素材不在 assets/approved/ 中");
@@ -100,7 +117,7 @@ function approvedAssetPath(relativePath) {
 
 function writeRunRecord(plan, status, extra = {}) {
   const date = new Date().toISOString().slice(0, 10);
-  const directory = path.join(projectRoot, "runs", date);
+  const directory = path.join(config.dataRoot, "runs", date);
   fs.mkdirSync(directory, { recursive: true });
   const workflowPath = plan.workflow ? path.join(directory, `${plan.id}.workflow.json`) : "";
   if (workflowPath) fs.writeFileSync(workflowPath, `${JSON.stringify(plan.workflow, null, 2)}\n`, "utf8");
@@ -110,7 +127,7 @@ function writeRunRecord(plan, status, extra = {}) {
     recorded_at: new Date().toISOString(),
     user_request: plan.message,
     agent_driver: `${config.llm.provider}:${config.llm.model}`,
-    workflow_path: workflowPath ? path.relative(projectRoot, workflowPath).replaceAll("\\", "/") : "",
+    workflow_path: workflowPath ? path.relative(config.dataRoot, workflowPath).replaceAll("\\", "/") : "",
     validation: plan.validation || null,
     action: plan.actionName || "workflow",
     ...extra,
@@ -126,6 +143,31 @@ function safeInfoIntent(message) {
   return historyMatch ? { history: historyMatch[1] } : null;
 }
 
+async function getExtensionCatalog(force = false) {
+  const catalogUrl = config.extensions.catalogUrl;
+  if (!catalogUrl) return [];
+  if (!force && catalogCache && Date.now() - catalogCache.at < 5 * 60 * 1000) return catalogCache.value;
+  try {
+    const value = await extensions.fetchCatalog(catalogUrl);
+    catalogCache = { at: Date.now(), value };
+    return value;
+  } catch {
+    return [];
+  }
+}
+
+async function preparePluginAction(message, pluginId, toolName, sessionId = "") {
+  const resolved = extensions.resolveTool(pluginId, toolName);
+  if (!resolved.tool.sideEffect) {
+    return { sessionId, kind: "info", reply: `${resolved.plugin.name} 已返回结果。`, data: await extensions.execute(pluginId, toolName), usedPlugin: `${pluginId}/${toolName}` };
+  }
+  const id = randomUUID();
+  const plan = { id, message, actionName: "plugin", action: { pluginId, toolName } };
+  plans.set(id, plan);
+  writeRunRecord(plan, "awaiting_approval", { plugin_id: pluginId, tool: toolName });
+  return { sessionId, kind: "approval", planId: id, action: `${resolved.plugin.name} / ${resolved.tool.description}`, reply: "该操作会改变云实例状态，确认后才会执行。" };
+}
+
 async function handleChat(body) {
   const message = String(body.message || "").trim();
   if (!message) throw new Error("请输入需求");
@@ -134,18 +176,48 @@ async function handleChat(body) {
   if (safeIntent) {
     if (safeIntent === "queue") return { sessionId: session.id, kind: "info", reply: "这是当前生成后端的队列状态。", data: await backend.queue() };
     if (typeof safeIntent === "object") return { sessionId: session.id, kind: "info", reply: `这是任务 ${safeIntent.history} 的历史状态。`, data: await backend.history(safeIntent.history) };
+    if (!config.backend.baseUrl) return { sessionId: session.id, kind: "info", reply: "生成后端尚未配置。请在“连接与配置”中填写后端地址。", data: { connected: false, backendType: config.backend.type } };
     const snapshot = await getSnapshot(true);
     return { sessionId: session.id, kind: "info", reply: "生成后端已连接，以下信息来自当前实例。", data: summarizeSnapshot(snapshot) };
   }
 
   if (!llm.configured) throw new Error("未配置 LLM_BASE_URL 和 LLM_MODEL，无法进行智能工作流规划");
-  const snapshot = await getSnapshot();
-  const summary = summarizeSnapshot(snapshot);
+  const snapshot = config.backend.baseUrl ? await getSnapshot() : { objectInfo: {}, systemStats: {}, templates: [] };
+  const summary = config.backend.baseUrl ? summarizeSnapshot(snapshot) : { backend_connected: false, node_count: 0, model_count: 0 };
   summary.approved_assets = listApprovedAssets();
   const catalog = buildNodeCatalog(snapshot.objectInfo, message);
-  const result = await llm.plan({ message, history: session.history, catalog, summary });
+  const selectedSkills = extensions.selectSkills(message);
+  const installedIds = new Set([...extensions.skills, ...extensions.plugins].map((item) => item.id));
+  const availableExtensions = (await getExtensionCatalog()).filter((item) => !installedIds.has(item.id));
+  const result = await llm.plan({
+    message,
+    history: session.history,
+    catalog,
+    summary,
+    skills: selectedSkills,
+    tools: extensions.tools().filter((tool) => tool.configured),
+    availableExtensions: availableExtensions.map(({ id, kind, name, version, description, keywords }) => ({ id, kind, name, version, description, keywords })),
+  });
   remember(session, "user", message);
   remember(session, "assistant", result.reply || result.intent || "已生成计划");
+
+  if (result.intent === "plugin") {
+    return preparePluginAction(message, String(result.action?.plugin_id || ""), String(result.action?.tool || ""), session.id);
+  }
+
+  if (result.intent === "extension_install") {
+    const entry = availableExtensions.find((item) => item.id === result.action?.extension_id);
+    if (!entry) throw new Error("智能体选择的扩展不在已验证 GitHub 目录中");
+    if (entry.kind === "skill" && config.extensions.autoInstallSkills !== false) {
+      const installed = await extensions.install(entry);
+      return { sessionId: session.id, kind: "info", reply: result.reply || `已从 GitHub 安装并启用 Skill：${entry.name}。`, data: installed };
+    }
+    const id = randomUUID();
+    const plan = { id, message, actionName: "extension_install", action: { entry } };
+    plans.set(id, plan);
+    writeRunRecord(plan, "awaiting_approval", { extension_id: entry.id, extension_version: entry.version });
+    return { sessionId: session.id, kind: "approval", planId: id, action: `从 GitHub 安装 ${entry.kind}：${entry.name} ${entry.version}`, reply: result.reply || "已找到匹配扩展；确认后将下载、校验并进行安全扫描。" };
+  }
 
   if (result.intent !== "workflow") {
     const supported = new Set(["interrupt", "clear_queue", "free_memory", "upload_asset", "download_output", "status", "help"]);
@@ -174,7 +246,7 @@ async function handleChat(body) {
     throw new Error(`候选工作流均未通过本地校验：${details}`);
   }
   const id = randomUUID();
-  const plan = { id, message, workflow: recommended.workflow, validation: recommended.validation, title: recommended.title || "推荐工作流" };
+  const plan = { id, message, workflow: recommended.workflow, validation: recommended.validation, title: recommended.title || "推荐工作流", skills: selectedSkills.map((skill) => skill.id) };
   plans.set(id, plan);
   writeRunRecord(plan, "planned");
   return {
@@ -183,6 +255,7 @@ async function handleChat(body) {
     planId: id,
     reply: result.reply || "已生成并校验推荐工作流。",
     assumptions: result.assumptions || [],
+    usedSkills: plan.skills,
     recommended: { title: plan.title, rationale: recommended.rationale || "", workflow: recommended.workflow, validation: recommended.validation },
     alternatives: ranked.slice(1).map((item) => ({ title: item.title || "备选方案", rationale: item.rationale || "", validation: item.validation })),
   };
@@ -213,6 +286,12 @@ async function confirmPlan(body) {
     const filePath = approvedAssetPath(plan.action.relative_path);
     result = await backend.uploadImage(path.basename(filePath), fs.readFileSync(filePath));
     writeRunRecord(plan, "uploaded", { source_assets: [plan.action.relative_path] });
+  } else if (plan.actionName === "plugin") {
+    result = await extensions.execute(plan.action.pluginId, plan.action.toolName);
+    writeRunRecord(plan, "executed", { plugin_id: plan.action.pluginId, tool: plan.action.toolName });
+  } else if (plan.actionName === "extension_install") {
+    result = await extensions.install(plan.action.entry);
+    writeRunRecord(plan, "installed", { extension_id: result.id, extension_version: result.version, security_scan: result.scan });
   } else {
     throw new Error("该操作不支持确认执行");
   }
@@ -238,7 +317,47 @@ async function handleApi(request, response, url) {
       model: config.llm.model,
       summary,
       approvedAssets: listApprovedAssets(),
+      config: publicConfig(config),
+      extensions: extensions.summary(),
+      tools: extensions.tools(),
+      security: await skillSpectorStatus(),
     });
+  }
+  if (request.method === "POST" && url.pathname === "/api/setup") {
+    saveSettings(config.dataRoot, await readJson(request));
+    applyConfig();
+    return sendJson(response, 200, { ok: true, config: publicConfig(config) });
+  }
+  if (request.method === "POST" && url.pathname === "/api/setup/test") {
+    const body = await readJson(request);
+    const results = {};
+    if (body.scope === "llm" || body.scope === "all") {
+      if (!llm.configured) throw new Error("请先保存大模型配置");
+      const content = await llm.generate("只返回单个 JSON 对象。", [{ role: "user", content: "返回 {\"ok\":true}，不要添加其他内容。" }]);
+      results.llm = Boolean(content);
+    }
+    if (body.scope === "backend" || body.scope === "all") {
+      if (!config.backend.baseUrl) throw new Error("请先保存生成后端地址");
+      results.backend = Boolean(await getSnapshot(true, 10000));
+    }
+    return sendJson(response, 200, { ok: true, results });
+  }
+  if (request.method === "GET" && url.pathname === "/api/extensions/catalog") {
+    return sendJson(response, 200, { extensions: await getExtensionCatalog(true) });
+  }
+  if (request.method === "POST" && url.pathname === "/api/extensions/prepare") {
+    const body = await readJson(request);
+    const entry = (await getExtensionCatalog()).find((item) => item.id === body.extensionId);
+    if (!entry) throw new Error("扩展不在当前 GitHub 目录中");
+    const id = randomUUID();
+    const plan = { id, message: `安装扩展 ${entry.id}`, actionName: "extension_install", action: { entry } };
+    plans.set(id, plan);
+    writeRunRecord(plan, "awaiting_approval", { extension_id: entry.id, extension_version: entry.version });
+    return sendJson(response, 200, { kind: "approval", planId: id, action: `从 GitHub 安装 ${entry.kind}：${entry.name} ${entry.version}`, reply: "确认后会下载固定文件、核对 SHA-256，并在启用前执行安全扫描。" });
+  }
+  if (request.method === "POST" && url.pathname === "/api/plugins/prepare") {
+    const body = await readJson(request);
+    return sendJson(response, 200, await preparePluginAction("界面快捷操作", String(body.pluginId || ""), String(body.tool || "")));
   }
   if (request.method === "POST" && url.pathname === "/api/chat") return sendJson(response, 200, await handleChat(await readJson(request)));
   if (request.method === "POST" && url.pathname === "/api/confirm") return sendJson(response, 200, await confirmPlan(await readJson(request)));
@@ -262,6 +381,10 @@ async function handleApi(request, response, url) {
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://127.0.0.1");
   try {
+    if (request.method === "POST" && request.headers.origin) {
+      const allowed = new Set([`http://127.0.0.1:${config.port}`, `http://localhost:${config.port}`]);
+      if (!allowed.has(request.headers.origin)) throw new Error("拒绝来自非本地页面的写入请求");
+    }
     if (url.pathname.startsWith("/api/")) {
       const handled = await handleApi(request, response, url);
       if (handled !== false) return;
@@ -274,6 +397,9 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(config.port, "127.0.0.1", () => {
+  const processFile = path.join(config.dataRoot, "server.json");
+  fs.writeFileSync(processFile, `${JSON.stringify({ pid: process.pid, executable: process.execPath, startedAt: new Date().toISOString() }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  process.on("exit", () => { try { fs.rmSync(processFile, { force: true }); } catch { /* best effort */ } });
   console.log(`Ropiq: http://127.0.0.1:${config.port}`);
   console.log(`LLM: ${llm.configured ? `${config.llm.provider}:${config.llm.model}` : "未配置"}; Backend: ${config.backend.baseUrl ? config.backend.type : "未配置"}`);
 });

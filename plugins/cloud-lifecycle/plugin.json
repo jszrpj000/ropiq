@@ -1,0 +1,24 @@
+{
+  "id": "cloud-lifecycle",
+  "name": "云实例控制",
+  "version": "1.0.0",
+  "description": "通过用户配置的云平台或网关 API 查询、停止实例。",
+  "keywords": ["云实例", "算力云", "停止实例", "关闭实例"],
+  "configKey": "cloudLifecycle",
+  "tools": [
+    {
+      "name": "instance_status",
+      "description": "查询已配置云实例的运行状态",
+      "method": "GET",
+      "urlSetting": "statusUrl",
+      "sideEffect": false
+    },
+    {
+      "name": "instance_stop",
+      "description": "停止已配置的云实例，可能中断任务但可停止继续计费",
+      "method": "POST",
+      "urlSetting": "stopUrl",
+      "sideEffect": true
+    }
+  ]
+}

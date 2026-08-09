@@ -14,10 +14,19 @@ test("uses an OpenAI-compatible endpoint without requiring a local API key", asy
     return new Response(JSON.stringify({ choices: [{ message: { content: '{"intent":"help","reply":"ok"}' } }] }), { status: 200 });
   };
   const client = new LlmClient({ provider: "openai-compatible", baseUrl: "http://localhost:11434/v1", model: "local", apiKey: "", jsonMode: true }, fakeFetch);
-  const result = await client.plan({ message: "help", catalog: [], summary: {} });
+  const result = await client.plan({
+    message: "help",
+    catalog: [],
+    summary: {},
+    skills: [{ id: "quality", name: "Quality", instructions: "Prefer stable settings." }],
+    tools: [{ plugin_id: "cloud", tool: "status", configured: true }],
+  });
   assert.equal(result.reply, "ok");
   assert.equal(request.url, "http://localhost:11434/v1/chat/completions");
   assert.equal(request.options.headers.Authorization, undefined);
+  const body = JSON.parse(request.options.body);
+  assert.match(body.messages[0].content, /Prefer stable settings/);
+  assert.match(body.messages[0].content, /cloud/);
 });
 
 test("maps Anthropic Messages responses to the common planner contract", async () => {

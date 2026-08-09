@@ -17,7 +17,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; background: var(--ink); }
 body { color: var(--text); font: 14px/1.55 Inter, "Segoe UI", "Microsoft YaHei", sans-serif; }
-button, textarea { font: inherit; }
+button, textarea, input, select { font: inherit; }
 button { color: inherit; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 228px minmax(480px, 1fr) 304px; }
@@ -36,6 +36,9 @@ button { color: inherit; }
 .new-session { width: 100%; border: 1px solid #354453; background: var(--panel-raised); border-radius: 12px; padding: 11px 13px; text-align: left; cursor: pointer; }
 .new-session span { color: var(--warm); margin-right: 7px; }
 .new-session:hover { border-color: #506274; }
+.rail-tool { width: 100%; margin-top: 7px; border: 0; border-radius: 9px; padding: 9px 11px; background: transparent; color: #9eacb4; text-align: left; cursor: pointer; }
+.rail-tool span { display: inline-block; width: 23px; color: var(--aqua); }
+.rail-tool:hover { background: #14212c; color: var(--text); }
 .rail-section { margin-top: 28px; }
 .rail-label, .header-kicker { color: #71828e; font: 700 10px/1.2 ui-monospace, Consolas, monospace; letter-spacing: .14em; text-transform: uppercase; }
 .rail-label { margin: 0 8px 10px; }
@@ -87,6 +90,9 @@ details { margin-top: 13px; }
 summary { color: var(--muted); cursor: pointer; }
 pre { max-height: 420px; overflow: auto; padding: 13px; border: 1px solid var(--line-soft); border-radius: 9px; background: #080e13; color: #bac7ce; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, Consolas, monospace; }
 .error { color: #ff9aa0; }
+.pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.pill { padding: 4px 8px; border: 1px solid #28504e; border-radius: 999px; color: var(--aqua); font: 700 9px ui-monospace, Consolas, monospace; letter-spacing: .04em; }
+.approval-card { border-color: #6c4b30; }
 
 .composer { width: min(780px, calc(100% - 42px)); margin: 0 auto 20px; display: grid; grid-template-columns: 1fr 42px; gap: 8px; padding: 11px; border: 1px solid #344858; border-radius: 17px; background: #121e29e8; box-shadow: 0 24px 70px #0006; backdrop-filter: blur(16px); }
 .composer:focus-within { border-color: #557080; }
@@ -110,6 +116,38 @@ pre { max-height: 420px; overflow: auto; padding: 13px; border: 1px solid var(--
 .privacy-note { margin: 26px 3px 0; padding: 12px; border: 1px solid #243744; border-radius: 10px; color: #788994; font-size: 10px; }
 .privacy-note span { margin-right: 6px; color: var(--aqua); font: 800 9px ui-monospace, Consolas, monospace; }
 
+.modal { width: min(760px, calc(100vw - 30px)); max-height: calc(100vh - 30px); padding: 0; border: 1px solid #334858; border-radius: 18px; background: #0e1821; color: var(--text); box-shadow: 0 30px 100px #000b; }
+.modal::backdrop { background: #02070bcc; backdrop-filter: blur(7px); }
+.modal form, .compact-modal { padding: 25px; }
+.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 19px; border-bottom: 1px solid var(--line-soft); }
+.modal-head h2 { margin: 6px 0 3px; font-size: 24px; }
+.modal-head p { margin: 0; color: var(--muted); font-size: 12px; }
+.icon-button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; background: #14212c; color: var(--muted); cursor: pointer; font-size: 21px; }
+.form-section { padding: 20px 0 2px; }
+.section-title { display: flex; align-items: center; gap: 12px; margin-bottom: 13px; }
+.section-title > span { color: var(--warm); font: 800 10px ui-monospace, Consolas, monospace; }
+.section-title strong, .section-title small { display: block; }
+.section-title small { margin-top: 1px; color: var(--muted); font-size: 10px; font-weight: 400; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.form-grid label { display: grid; gap: 6px; color: #96a5ae; font-size: 11px; }
+.form-grid .wide { grid-column: 1 / -1; }
+.form-grid input, .form-grid select { width: 100%; min-width: 0; border: 1px solid #2d4050; border-radius: 9px; outline: 0; padding: 10px 11px; background: #091219; color: var(--text); }
+.form-grid input:focus, .form-grid select:focus { border-color: var(--aqua); }
+.form-result { min-height: 20px; margin: 17px 0 0; color: var(--aqua); font-size: 12px; }
+.modal-actions { position: sticky; bottom: -25px; display: flex; justify-content: flex-end; gap: 8px; margin: 0 -25px -25px; padding: 15px 25px; border-top: 1px solid var(--line-soft); background: #0e1821f2; }
+.compact-modal { width: min(680px, calc(100vw - 30px)); }
+.security-banner { display: flex; align-items: center; gap: 11px; margin: 18px 0; padding: 12px; border: 1px solid #28413f; border-radius: 11px; background: #10201f; }
+.security-banner strong, .security-banner small { display: block; }
+.security-banner small { margin-top: 2px; color: var(--muted); }
+.extension-list { display: grid; gap: 8px; }
+.extension-row { display: flex; align-items: center; gap: 14px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 11px; background: #101b24; }
+.extension-copy { min-width: 0; flex: 1; }
+.extension-copy strong, .extension-copy small { display: block; }
+.extension-copy small { margin-top: 2px; color: var(--aqua); font: 700 9px ui-monospace, Consolas, monospace; }
+.extension-copy p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+.installed-badge { color: var(--aqua); font-size: 10px; }
+.catalog-head { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 10px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+
 @media (max-width: 1080px) {
   .app-shell { grid-template-columns: 210px 1fr; }
   .context-panel { display: none; }
@@ -123,4 +161,8 @@ pre { max-height: 420px; overflow: auto; padding: 13px; border: 1px solid var(--
   .conversation { padding: 28px 15px; }
   .composer { width: calc(100% - 22px); margin-bottom: 10px; }
   .composer-footer span:first-child { display: none; }
+  .modal form, .compact-modal { padding: 17px; }
+  .form-grid { grid-template-columns: 1fr; }
+  .form-grid .wide { grid-column: auto; }
+  .modal-actions { bottom: -17px; margin: 0 -17px -17px; padding: 13px 17px; }
 }

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "updated": "2026-08-09",
+  "extensions": [
+    {
+      "id": "rights-safe",
+      "kind": "skill",
+      "name": "版权与品牌安全",
+      "version": "1.0.0",
+      "description": "在生成任务中避免未经授权的品牌素材、模型和风格冒充。",
+      "keywords": ["版权", "品牌", "商标", "侵权", "开源许可", "商业使用"],
+      "files": [
+        {
+          "name": "skill.json",
+          "url": "https://raw.githubusercontent.com/jszrpj000/ropiq/main/catalog/skills/rights-safe/skill.json",
+          "sha256": "3f0f782228f43d1bf3ac6df7b4a7d5174176d7b9263c351f1e33dc26c343c400"
+        },
+        {
+          "name": "SKILL.md",
+          "url": "https://raw.githubusercontent.com/jszrpj000/ropiq/main/catalog/skills/rights-safe/SKILL.md",
+          "sha256": "2b78255ba102f6652416fe0aab966f2cb55e36d8bd96d568cec9b8e48a6d5f43"
+        }
+      ]
+    }
+  ]
+}
