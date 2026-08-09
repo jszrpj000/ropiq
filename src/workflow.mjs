@@ -181,6 +181,72 @@ export function validateWorkflow(workflow, objectInfo, systemStats = {}) {
   return { valid: errors.length === 0, score, errors, warnings, metrics: { outputNodes, maxPixels, maxFrames, maxBatch, maxSteps, vramGb } };
 }
 
+const externalGenerationNode = /(fluxkontextpro|replicate|falai|stabilityapi|openaiimage|dall.?e|gemini.*image|imagen\d*|kling|runway|hailuo|minimax.*video|vidu|luma.*(?:image|video)|veo\d*|jimeng|siliconflow|cloud.*(?:image|video)|api.*(?:image|video)|(?:image|video).*api)/i;
+const localLoaderNode = /(?:checkpoint|unet|diffusion|clip|vae|lora|controlnet|gguf).*(?:loader|load)|(?:loader|load).*(?:checkpoint|unet|diffusion|clip|vae|lora|controlnet|gguf)/i;
+const localModelFile = /\.(?:safetensors|ckpt|gguf|pt|pth|bin)$/i;
+
+export function validateSelfHostedWorkflow(workflow) {
+  const errors = [];
+  const nodes = Object.values(workflow || {});
+  const external = nodes.find((node) => externalGenerationNode.test(String(node?.class_type || ""))
+    || Object.keys(node?.inputs || {}).some((name) => /api_?key|access_?key|secret_?key|bearer_?token|api_?token/i.test(name)));
+  if (external) errors.push(`禁止使用外部付费/API 生成节点：${external.class_type}`);
+
+  const hasLocalModel = nodes.some((node) => localLoaderNode.test(String(node?.class_type || ""))
+    || Object.values(node?.inputs || {}).some((value) => typeof value === "string" && localModelFile.test(value)));
+  if (!hasLocalModel) errors.push("工作流没有本地模型加载器或本地模型文件，无法证明使用的是用户自己的 ComfyUI 算力");
+
+  const hasSampler = nodes.some((node) => /sampler|sampling/i.test(String(node?.class_type || "")));
+  if (!hasSampler) errors.push("工作流没有本地采样节点");
+  return { valid: errors.length === 0, errors };
+}
+
+function enumChoices(objectInfo, classType, inputName) {
+  const spec = objectInfo?.[classType]?.input?.required?.[inputName] || objectInfo?.[classType]?.input?.optional?.[inputName];
+  return Array.isArray(spec?.[0]) ? spec[0] : [];
+}
+
+function pickChoice(values, patterns) {
+  return patterns.flatMap((pattern) => values.filter((value) => pattern.test(String(value))))[0] || "";
+}
+
+function boundedNumber(value, fallback, min, max) {
+  const number = Number(value);
+  return Math.max(min, Math.min(max, Number.isFinite(number) ? number : fallback));
+}
+
+export function buildTrustedImageCandidate(objectInfo, artifact, outputPrefix) {
+  const requiredNodes = ["UNETLoader", "ModelSamplingAuraFlow", "CLIPLoader", "CLIPTextEncode", "EmptySD3LatentImage", "KSampler", "VAELoader", "VAEDecode", "SaveImage"];
+  if (!requiredNodes.every((classType) => objectInfo?.[classType])) return null;
+
+  const unet = pickChoice(enumChoices(objectInfo, "UNETLoader", "unet_name"), [/^z_image_turbo_bf16\.safetensors$/i, /z[_ -]?image.*turbo.*\.safetensors$/i]);
+  const clip = pickChoice(enumChoices(objectInfo, "CLIPLoader", "clip_name"), [/^qwen_3_4b\.safetensors$/i, /qwen.*3.*4b.*\.safetensors$/i]);
+  const vae = pickChoice(enumChoices(objectInfo, "VAELoader", "vae_name"), [/^ae\.safetensors$/i, /z[_ -]?image.*vae.*\.safetensors$/i]);
+  const clipType = pickChoice(enumChoices(objectInfo, "CLIPLoader", "type"), [/^lumina2$/i]);
+  const sampler = pickChoice(enumChoices(objectInfo, "KSampler", "sampler_name"), [/^res_multistep$/i]);
+  const scheduler = pickChoice(enumChoices(objectInfo, "KSampler", "scheduler"), [/^simple$/i]);
+  if (![unet, clip, vae, clipType, sampler, scheduler].every(Boolean)) return null;
+
+  const job = artifact?.execution?.jobs?.[0] || artifact || {};
+  const width = Math.round(boundedNumber(job.width, 768, 256, 2048) / 64) * 64;
+  const height = Math.round(boundedNumber(job.height, 768, 256, 2048) / 64) * 64;
+  const positive = String(job.positivePrompt || job.positive_prompt || job.prompt || artifact?.summary || "original cinematic scene").slice(0, 10000);
+  const negative = String(job.negativePrompt || job.negative_prompt || "text, logo, watermark, low quality").slice(0, 10000);
+  const workflow = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: unet, weight_dtype: pickChoice(enumChoices(objectInfo, "UNETLoader", "weight_dtype"), [/^default$/i]) || "default" } },
+    "2": { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 3 } },
+    "3": { class_type: "CLIPLoader", inputs: { clip_name: clip, type: clipType, device: pickChoice(enumChoices(objectInfo, "CLIPLoader", "device"), [/^default$/i]) || "default" } },
+    "4": { class_type: "CLIPTextEncode", inputs: { text: positive, clip: ["3", 0] } },
+    "5": { class_type: "CLIPTextEncode", inputs: { text: negative, clip: ["3", 0] } },
+    "6": { class_type: "EmptySD3LatentImage", inputs: { width, height, batch_size: 1 } },
+    "7": { class_type: "KSampler", inputs: { model: ["2", 0], positive: ["4", 0], negative: ["5", 0], latent_image: ["6", 0], seed: Math.round(boundedNumber(job.seed, 42, 0, Number.MAX_SAFE_INTEGER)), control_after_generate: "fixed", steps: Math.round(boundedNumber(job.steps, 8, 1, 30)), cfg: boundedNumber(job.cfg, 1, 0, 30), sampler_name: sampler, scheduler, denoise: 1 } },
+    "8": { class_type: "VAELoader", inputs: { vae_name: vae } },
+    "9": { class_type: "VAEDecode", inputs: { samples: ["7", 0], vae: ["8", 0] } },
+    "10": { class_type: "SaveImage", inputs: { images: ["9", 0], filename_prefix: outputPrefix } },
+  };
+  return { title: "Z-Image Turbo 本地低成本预览", rationale: "使用当前 ComfyUI 已安装的本地模型、编码器、VAE 和采样器，不调用外部生成 API。", workflow };
+}
+
 export function rankCandidates(candidates, objectInfo, systemStats) {
   return (Array.isArray(candidates) ? candidates : [])
     .map((candidate, index) => ({

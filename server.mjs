@@ -9,7 +9,7 @@ import { ExtensionRegistry } from "./src/extensions.mjs";
 import { LlmClient } from "./src/llm.mjs";
 import { skillSpectorStatus } from "./src/security.mjs";
 import { StudioStore, STUDIO_PIPELINES, splitLongText } from "./src/studio.mjs";
-import { buildNodeCatalog, rankCandidates, validateWorkflow } from "./src/workflow.mjs";
+import { buildNodeCatalog, buildTrustedImageCandidate, rankCandidates, validateSelfHostedWorkflow, validateWorkflow } from "./src/workflow.mjs";
 
 const agentRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = agentRoot;
@@ -136,6 +136,13 @@ function writeRunRecord(plan, status, extra = {}) {
     ...extra,
   };
   fs.writeFileSync(path.join(directory, `${plan.id}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+}
+
+function validateStudioWorkflow(workflow, objectInfo, systemStats) {
+  const structural = validateWorkflow(workflow, objectInfo, systemStats);
+  const policy = validateSelfHostedWorkflow(workflow);
+  const errors = [...structural.errors, ...policy.errors];
+  return { ...structural, valid: errors.length === 0, score: Math.max(0, structural.score - policy.errors.length * 25), errors };
 }
 
 function safeInfoIntent(message) {
@@ -273,7 +280,9 @@ async function confirmPlan(body) {
   let studioProject = null;
   if (plan.workflow) {
     const snapshot = await getSnapshot(true);
-    const validation = validateWorkflow(plan.workflow, snapshot.objectInfo, snapshot.systemStats);
+    const validation = plan.studio
+      ? validateStudioWorkflow(plan.workflow, snapshot.objectInfo, snapshot.systemStats)
+      : validateWorkflow(plan.workflow, snapshot.objectInfo, snapshot.systemStats);
     if (!validation.valid) throw new Error(`执行前校验失败：${validation.errors.join("；")}`);
     result = await backend.submit(plan.workflow, randomUUID());
     writeRunRecord(plan, "submitted", { prompt_id: result.prompt_id || "" });
@@ -424,21 +433,31 @@ async function prepareStudioExecution(projectId, stageId) {
 2. 遵循阶段产物中的镜头、提示词、尺寸、预算和先预览策略；如果有多个任务，当前先生成一个代表性预览。
 3. 必须包含真实输出节点，输出前缀使用 RopiqStudio/${project.id.slice(0, 8)}-${stage.id}。
 4. 不得执行，只返回 workflow 候选并等待人工确认。
-5. 不得引入阶段产物未授权的人物、品牌、声音、模型或素材。`;
+5. 不得引入阶段产物未授权的人物、品牌、声音、模型或素材。
+6. 禁止 FluxKontextPro、OpenAI、Gemini、Kling、Runway、Replicate、fal、Stability API 等任何外部付费/API 生成节点。
+7. 必须使用部署在当前 ComfyUI 内的本地模型加载器、模型文件和本地采样节点；图像工作流优先使用 UNETLoader、CLIPLoader、VAELoader、KSampler、VAEDecode、SaveImage 等真实可用节点。`;
   const summary = summarizeSnapshot(snapshot);
   summary.approved_assets = listApprovedAssets();
-  const catalog = buildNodeCatalog(snapshot.objectInfo, `${message} ${artifactText}`);
   const selectedSkills = extensions.selectSkills(`${project.title} ${stage.name} ${artifactText}`);
-  const result = await llm.plan({
-    message,
-    catalog,
-    summary,
-    skills: selectedSkills,
-    tools: extensions.tools().filter((tool) => tool.configured),
-    availableExtensions: [],
-  });
+  const trusted = /image/i.test(stageId)
+    ? buildTrustedImageCandidate(snapshot.objectInfo, artifact, `RopiqStudio/${project.id.slice(0, 8)}-${stage.id}`)
+    : null;
+  const result = trusted
+    ? { intent: "workflow", reply: "已根据当前 ComfyUI 中的本地模型和节点生成受信任工作流。", candidates: [trusted] }
+    : await llm.plan({
+      message,
+      catalog: buildNodeCatalog(snapshot.objectInfo, `${message} local model UNETLoader CLIPLoader VAELoader KSampler VAEDecode SaveImage ${artifactText}`),
+      summary,
+      skills: selectedSkills,
+      tools: extensions.tools().filter((tool) => tool.configured),
+      availableExtensions: [],
+    });
   if (result.intent !== "workflow") throw new Error("大模型没有返回可校验的节点工作流");
-  const ranked = rankCandidates(result.candidates, snapshot.objectInfo, snapshot.systemStats);
+  const ranked = (Array.isArray(result.candidates) ? result.candidates : []).map((candidate, index) => ({
+    ...candidate,
+    validation: validateStudioWorkflow(candidate.workflow, snapshot.objectInfo, snapshot.systemStats),
+    originalIndex: index,
+  })).sort((a, b) => b.validation.score - a.validation.score || a.originalIndex - b.originalIndex);
   if (!ranked.length) throw new Error("大模型没有返回工作流候选");
   const recommended = ranked[0];
   if (!recommended.validation.valid) throw new Error(`候选工作流未通过本地校验：${recommended.validation.errors.slice(0, 8).join("；")}`);
