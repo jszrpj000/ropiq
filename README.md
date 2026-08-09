@@ -2,7 +2,7 @@
 
 Ropiq is an independent, conversation-first agent for local generation workflows. A user describes the result they want; Ropiq reads the capabilities exposed by a user-configured backend, proposes candidate graphs, validates them locally, and recommends the best valid workflow.
 
-> Status: installable alpha. The guided configuration, planning, extension selection, validation, approval, and execution loop works. Broader generation-backend and cloud-provider adapters remain roadmap items.
+> Status: installable alpha. The guided configuration, 17-stage AI drama studio, 14-stage product-video studio, planning, extension selection, validation, approval, and execution-specification loop work. Media executor adapters beyond the initial node-graph backend remain roadmap items.
 
 ## What works
 
@@ -17,12 +17,16 @@ Ropiq is an independent, conversation-first agent for local generation workflows
 - GitHub catalog discovery with fixed file lists, SHA-256 verification, size limits, and pre-enable security scanning.
 - Optional NVIDIA SkillSpector integration when its `skillspector` executable is installed.
 - Generic cloud-instance status and stop endpoints; stopping always requires explicit confirmation.
+- Persistent AI drama projects covering novel analysis, adaptation, episodic scripts, character/scene design, storyboard, cinematography, look development, prompts, image/video, voice, lip sync, audio/subtitles, editing, quality control, and delivery.
+- A separate product-promotion workflow with factual-claim and brand-consistency checks.
+- TXT and Markdown import up to 400,000 characters, chunked source analysis, editable JSON artifacts, per-stage reruns, and automatic downstream invalidation.
+- Honest capability reporting: missing media plugins produce reviewable task specifications instead of fake completion claims.
 
 Ropiq does not distribute or automatically start third-party runtimes, models, nodes, templates, drivers, or assets. Hardware and model support come from the backend and components the user chooses to install under their respective licenses.
 
 ## Windows installer
 
-Download `Ropiq-Setup-0.3.0-alpha.1.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
+Download `Ropiq-Setup-0.4.0-alpha.1.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
 
 The alpha installer is not code-signed, so Windows may show an unknown-publisher warning. Verify the SHA-256 value published with the release before opening it.
 
@@ -72,9 +76,9 @@ Local OpenAI-compatible services such as Ollama, vLLM, and LM Studio can leave `
 
 See [Compatibility and independence](docs/COMPATIBILITY.md), [Third-party notices](THIRD_PARTY_NOTICES.md), and [Security](SECURITY.md).
 
-## Open core
+## Free and open
 
-The self-hosted single-user core is licensed under AGPL-3.0-or-later. Optional paid products may provide independently implemented hosted execution, team administration, enterprise identity, support, and operations. They must not copy third-party code or restrict rights granted for open-source components. See [Open-core model](docs/OPEN_CORE.md) and [Roadmap](docs/ROADMAP.md).
+The local creative core is licensed under AGPL-3.0-or-later and is intended to remain free. A future optional extension marketplace or learning center may contain clearly labeled advertising, but ads will not be inserted into prompts, projects, outputs, or workflow rankings. See [Free and open model](docs/FREE_AND_OPEN.md) and [Roadmap](docs/ROADMAP.md).
 
 ## Development
 

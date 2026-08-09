@@ -5,8 +5,15 @@ const sendButton = document.querySelector("#send");
 const setupDialog = document.querySelector("#setup-dialog");
 const setupForm = document.querySelector("#setup-form");
 const extensionsDialog = document.querySelector("#extensions-dialog");
+const studioDialog = document.querySelector("#studio-dialog");
+const studioCreateForm = document.querySelector("#studio-create-form");
 let sessionId = sessionStorage.getItem("ropiq-session") || "";
 let bootstrapData = null;
+let studioPipelines = null;
+let studioProjects = [];
+let currentStudioType = "drama";
+let currentStudioProject = null;
+let selectedStudioStageId = "";
 
 async function api(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
@@ -270,6 +277,251 @@ function openExtensions() {
   if (!extensionsDialog.open) extensionsDialog.showModal();
 }
 
+const studioStatusLabels = {
+  pending: "待生成",
+  running: "生成中",
+  complete: "已完成",
+  specified: "规格已就绪",
+  stale: "需重做",
+  error: "生成失败",
+};
+
+function studioTypeCopy(type) {
+  return type === "drama"
+    ? { title: "AI 短剧工坊", heading: "创建 AI 短剧项目", copy: "导入有权使用的小说或故事，智能体会按完整 17 阶段生产链逐步处理。", tag: "AI DRAMA" }
+    : { title: "商品视频工坊", heading: "创建商品宣传视频", copy: "填写商品事实、素材、受众和平台要求，智能体会建立不夸大功效的宣传视频生产链。", tag: "PRODUCT VIDEO" };
+}
+
+function showStudioCreate() {
+  currentStudioProject = null;
+  selectedStudioStageId = "";
+  studioCreateForm.hidden = false;
+  document.querySelector("#studio-workspace").hidden = true;
+  studioCreateForm.reset();
+  studioCreateForm.elements.type.value = currentStudioType;
+  studioCreateForm.elements.episodes.value = 1;
+  studioCreateForm.elements.episodeSeconds.value = currentStudioType === "drama" ? 90 : 30;
+  studioCreateForm.elements.style.value = currentStudioType === "drama" ? "写实电影感" : "干净棚拍、商品质感清晰";
+  studioCreateForm.elements.previewFirst.checked = true;
+  document.querySelector("#studio-source-count").textContent = "0 / 400000 字符";
+  document.querySelector("#studio-create-result").textContent = "";
+  studioDialog.scrollTop = 0;
+  document.querySelector(".studio-main").scrollTop = 0;
+  renderStudioProjectList();
+}
+
+function renderStudioProjectList() {
+  const target = document.querySelector("#studio-project-list");
+  target.replaceChildren();
+  const projects = studioProjects.filter((project) => project.type === currentStudioType);
+  if (!projects.length) target.append(element("p", "muted", "还没有项目"));
+  projects.forEach((project) => {
+    const button = element("button", `studio-project-card ${project.id === currentStudioProject?.id ? "active" : ""}`.trim());
+    button.append(element("strong", "", project.title), element("small", "", `${project.progress.done}/${project.progress.total} 阶段 · ${new Date(project.updatedAt).toLocaleDateString()}`));
+    button.addEventListener("click", () => loadStudioProject(project.id));
+    target.append(button);
+  });
+}
+
+function inferredStageCapability(stage, artifact) {
+  if (artifact?.execution) {
+    const execution = artifact.execution;
+    return execution.ready
+      ? { ready: true, text: `执行器 ${execution.executor} 已就绪${execution.mode === "specification_only" ? "；当前保存的是待确认任务规格" : ""}` }
+      : { ready: false, text: (execution.missing || []).join("；") || `执行器 ${execution.executor} 尚未就绪` };
+  }
+  if (stage.executor === "llm") return { ready: Boolean(bootstrapData?.llmConfigured), text: bootstrapData?.llmConfigured ? "大模型可生成并保存本阶段内容" : "请先配置大模型接口" };
+  if (stage.executor === "comfyui") return { ready: Boolean(bootstrapData?.connected), text: bootstrapData?.connected ? "节点图后端已连接；生成后会先保存待确认任务规格" : "请连接本地或云端节点图后端" };
+  const keyword = stage.executor.slice(7);
+  const ready = bootstrapData?.tools?.some((tool) => tool.configured && `${tool.plugin_id} ${tool.tool}`.toLowerCase().includes(keyword));
+  return { ready: Boolean(ready), text: ready ? `${keyword} 插件已配置；执行前仍需确认` : `缺少 ${keyword} 执行插件；本阶段仍可先生成任务规格` };
+}
+
+function selectStudioStage(stageId) {
+  if (!currentStudioProject) return;
+  selectedStudioStageId = stageId;
+  renderStudioProject(currentStudioProject);
+}
+
+function renderStudioProject(project) {
+  currentStudioProject = project;
+  studioCreateForm.hidden = true;
+  document.querySelector("#studio-workspace").hidden = false;
+  studioDialog.scrollTop = 0;
+  document.querySelector(".studio-main").scrollTop = 0;
+  const typeCopy = studioTypeCopy(project.type);
+  document.querySelector("#studio-project-type").textContent = typeCopy.tag;
+  document.querySelector("#studio-project-name").textContent = project.title;
+  document.querySelector("#studio-project-meta").textContent = `${project.settings.episodes} 集 · ${project.settings.episodeSeconds} 秒 · ${project.settings.aspectRatio} · 预算 ${project.settings.budgetCny || 0} 元`;
+  document.querySelector("#studio-progress-label").textContent = `${project.progress.done} / ${project.progress.total}`;
+  document.querySelector("#studio-progress-bar").style.width = `${project.progress.percent}%`;
+
+  const stages = document.querySelector("#studio-stages");
+  stages.replaceChildren();
+  if (!selectedStudioStageId || !project.stages.some((stage) => stage.id === selectedStudioStageId)) {
+    selectedStudioStageId = project.stages.find((stage) => ["pending", "stale", "error"].includes(stage.status))?.id || project.stages[0].id;
+  }
+  project.stages.forEach((stage) => {
+    const button = element("button", `studio-stage-button ${stage.id === selectedStudioStageId ? "active" : ""}`.trim());
+    button.type = "button";
+    button.append(element("span", "studio-stage-number", String(stage.order).padStart(2, "0")), element("small", "", stage.name), element("i", `stage-dot ${stage.status}`));
+    button.addEventListener("click", () => selectStudioStage(stage.id));
+    stages.append(button);
+  });
+
+  const stage = project.stages.find((item) => item.id === selectedStudioStageId);
+  const artifact = project.artifacts?.[stage.id];
+  document.querySelector("#studio-stage-order").textContent = `STAGE ${String(stage.order).padStart(2, "0")} · ${stage.executor.toUpperCase()}`;
+  document.querySelector("#studio-stage-name").textContent = stage.name;
+  document.querySelector("#studio-stage-instruction").textContent = stage.instruction;
+  const status = document.querySelector("#studio-stage-status");
+  status.className = `stage-status ${stage.status}`;
+  status.textContent = studioStatusLabels[stage.status] || stage.status;
+  const capability = inferredStageCapability(stage, artifact);
+  const capabilityNode = document.querySelector("#studio-stage-capability");
+  capabilityNode.className = `capability-note ${capability.ready ? "ready" : "missing"}`;
+  capabilityNode.textContent = capability.text;
+  document.querySelector("#studio-artifact").value = artifact ? JSON.stringify(artifact, null, 2) : "";
+  document.querySelector("#studio-action-result").textContent = stage.summary || "";
+  document.querySelector("#studio-run-stage").textContent = ["complete", "specified", "stale", "error"].includes(stage.status) ? "重新生成当前阶段" : "生成当前阶段";
+  renderStudioProjectList();
+}
+
+async function loadStudioProject(id) {
+  try {
+    const data = await api(`/api/studio/projects/${id}`);
+    renderStudioProject(data.project);
+  } catch (error) {
+    document.querySelector("#studio-create-result").textContent = error.message;
+  }
+}
+
+async function refreshStudioProjects() {
+  const [pipelineData, projectData] = await Promise.all([
+    studioPipelines ? Promise.resolve({ pipelines: studioPipelines }) : api("/api/studio/pipelines"),
+    api("/api/studio/projects"),
+  ]);
+  studioPipelines = pipelineData.pipelines;
+  studioProjects = projectData.projects;
+  renderStudioProjectList();
+}
+
+async function openStudio(type) {
+  currentStudioType = type;
+  const copy = studioTypeCopy(type);
+  document.querySelector("#studio-title").textContent = copy.title;
+  document.querySelector("#studio-create-heading").textContent = copy.heading;
+  document.querySelector("#studio-create-copy").textContent = copy.copy;
+  if (!studioDialog.open) studioDialog.showModal();
+  try {
+    await refreshStudioProjects();
+    const recent = studioProjects.find((project) => project.type === type);
+    if (recent) await loadStudioProject(recent.id);
+    else showStudioCreate();
+  } catch (error) {
+    showStudioCreate();
+    document.querySelector("#studio-create-result").textContent = error.message;
+  }
+}
+
+async function runStudio(action, button) {
+  if (!currentStudioProject) return;
+  if (action === "next") {
+    const next = currentStudioProject.stages.find((stage) => ["pending", "stale", "error"].includes(stage.status));
+    if (next) selectedStudioStageId = next.id;
+  }
+  button.disabled = true;
+  const result = document.querySelector("#studio-action-result");
+  result.textContent = "正在生成并保存结构化阶段产物…长文本首次解析可能需要数分钟。";
+  try {
+    const url = action === "next"
+      ? `/api/studio/projects/${currentStudioProject.id}/run-next`
+      : `/api/studio/projects/${currentStudioProject.id}/stages/${selectedStudioStageId}/run`;
+    const data = await api(url, { method: "POST", body: "{}" });
+    currentStudioProject = data.project;
+    const summary = data.project.artifacts?.[selectedStudioStageId]?.summary;
+    renderStudioProject(data.project);
+    document.querySelector("#studio-action-result").textContent = summary || "阶段产物已保存。";
+    await refreshStudioProjects();
+  } catch (error) {
+    result.textContent = error.message;
+    if (/配置大模型/.test(error.message)) openSetup();
+    if (currentStudioProject) await loadStudioProject(currentStudioProject.id);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+studioCreateForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = studioCreateForm.querySelector("button[type=submit]");
+  const result = document.querySelector("#studio-create-result");
+  button.disabled = true;
+  result.textContent = "正在创建项目…";
+  try {
+    const values = new FormData(studioCreateForm);
+    const file = studioCreateForm.elements.sourceFile.files[0];
+    const payload = {
+      type: currentStudioType,
+      title: values.get("title"),
+      filename: file?.name || "",
+      sourceText: values.get("sourceText"),
+      settings: {
+        episodes: Number(values.get("episodes")),
+        episodeSeconds: Number(values.get("episodeSeconds")),
+        aspectRatio: values.get("aspectRatio"),
+        budgetCny: Number(values.get("budgetCny")),
+        style: values.get("style"),
+        previewFirst: values.get("previewFirst") === "on",
+      },
+    };
+    const data = await api("/api/studio/projects", { method: "POST", body: JSON.stringify(payload) });
+    studioProjects.unshift({ id: data.project.id, type: data.project.type, title: data.project.title, updatedAt: data.project.updatedAt, progress: data.project.progress });
+    renderStudioProject(data.project);
+  } catch (error) {
+    result.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.querySelector("#studio-source-file").addEventListener("change", async (event) => {
+  const file = event.currentTarget.files[0];
+  if (!file) return;
+  const text = await file.text();
+  if (text.length > 400000) {
+    document.querySelector("#studio-create-result").textContent = "文件超过首版 40 万字符上限，请拆分后导入。";
+    event.currentTarget.value = "";
+    return;
+  }
+  studioCreateForm.elements.sourceText.value = text;
+  document.querySelector("#studio-source-count").textContent = `${text.length} / 400000 字符`;
+});
+
+studioCreateForm.elements.sourceText.addEventListener("input", (event) => {
+  document.querySelector("#studio-source-count").textContent = `${event.currentTarget.value.length} / 400000 字符`;
+});
+
+document.querySelector("#studio-save-artifact").addEventListener("click", async (event) => {
+  if (!currentStudioProject) return;
+  const result = document.querySelector("#studio-action-result");
+  event.currentTarget.disabled = true;
+  try {
+    const artifact = JSON.parse(document.querySelector("#studio-artifact").value || "{}");
+    const stage = currentStudioProject.stages.find((item) => item.id === selectedStudioStageId);
+    const status = stage?.executor === "llm" ? "complete" : "specified";
+    const data = await api(`/api/studio/projects/${currentStudioProject.id}/stages/${selectedStudioStageId}/artifact`, { method: "POST", body: JSON.stringify({ artifact, status }) });
+    renderStudioProject(data.project);
+    result.textContent = "修改已保存；受影响的下游阶段已标记为需要重做。";
+    await refreshStudioProjects();
+  } catch (error) { result.textContent = `保存失败：${error.message}`; }
+  finally { event.currentTarget.disabled = false; }
+});
+
+document.querySelector("#studio-run-stage").addEventListener("click", (event) => runStudio("stage", event.currentTarget));
+document.querySelector("#studio-run-next").addEventListener("click", (event) => runStudio("next", event.currentTarget));
+document.querySelector("#studio-new-project").addEventListener("click", showStudioCreate);
+
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   const text = promptInput.value;
@@ -292,6 +544,8 @@ document.querySelectorAll("[data-close]").forEach((button) => button.addEventLis
 document.querySelector("#new-chat").addEventListener("click", () => { sessionId = ""; sessionStorage.removeItem("ropiq-session"); window.location.reload(); });
 document.querySelector("#open-setup").addEventListener("click", openSetup);
 document.querySelector("#open-extensions").addEventListener("click", openExtensions);
+document.querySelector("#open-drama-studio").addEventListener("click", () => openStudio("drama"));
+document.querySelector("#open-product-studio").addEventListener("click", () => openStudio("product"));
 document.querySelector("#cloud-stop").addEventListener("click", async () => renderResult(await api("/api/plugins/prepare", { method: "POST", body: JSON.stringify({ pluginId: "cloud-lifecycle", tool: "instance_stop" }) })));
 
 setupForm.addEventListener("submit", async (event) => {

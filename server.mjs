@@ -8,6 +8,7 @@ import { ComfyUiClient, summarizeSnapshot } from "./src/comfyui.mjs";
 import { ExtensionRegistry } from "./src/extensions.mjs";
 import { LlmClient } from "./src/llm.mjs";
 import { skillSpectorStatus } from "./src/security.mjs";
+import { StudioStore, STUDIO_PIPELINES, splitLongText } from "./src/studio.mjs";
 import { buildNodeCatalog, rankCandidates, validateWorkflow } from "./src/workflow.mjs";
 
 const agentRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -17,6 +18,7 @@ let config;
 let backend;
 let llm;
 let extensions;
+let studio;
 const plans = new Map();
 const sessions = new Map();
 let snapshotCache = null;
@@ -28,6 +30,7 @@ function applyConfig() {
   backend = new ComfyUiClient(config.backend);
   llm = new LlmClient(config.llm);
   extensions = new ExtensionRegistry({ projectRoot, dataRoot: config.dataRoot, pluginConfig: config.plugins });
+  studio = new StudioStore(config.dataRoot);
   fs.mkdirSync(path.join(config.dataRoot, "assets", "approved"), { recursive: true });
   fs.mkdirSync(path.join(config.dataRoot, "runs"), { recursive: true });
   snapshotCache = null;
@@ -299,6 +302,97 @@ async function confirmPlan(body) {
   return { ok: true, result };
 }
 
+const executorKeywords = {
+  "plugin:tts": ["tts", "voice", "speech", "配音"],
+  "plugin:lipsync": ["lipsync", "lip_sync", "lip-sync", "口型"],
+  "plugin:audio": ["audio", "music", "caption", "subtitle", "音频", "字幕"],
+  "plugin:editor": ["editor", "editing", "render", "timeline", "剪辑"],
+};
+
+function matchingExecutorTools(executor) {
+  const keywords = executorKeywords[executor] || [];
+  return extensions.tools().filter((tool) => {
+    if (!tool.configured) return false;
+    const text = `${tool.plugin_id || ""} ${tool.tool || ""} ${tool.description || ""}`.toLowerCase();
+    return keywords.some((keyword) => text.includes(keyword));
+  });
+}
+
+function stageCapability(stage, snapshot = null, connectionError = "") {
+  if (stage.executor === "llm") {
+    return { executor: "llm", ready: llm.configured, missing: llm.configured ? [] : ["未配置大模型接口"] };
+  }
+  if (stage.executor === "comfyui") {
+    const ready = Boolean(config.backend.baseUrl && snapshot);
+    return {
+      executor: "comfyui",
+      ready,
+      missing: ready ? [] : [connectionError || (config.backend.baseUrl ? "生成后端当前无法连接" : "未配置本地或云端节点图后端")],
+      backend: snapshot ? summarizeSnapshot(snapshot) : null,
+    };
+  }
+  const tools = matchingExecutorTools(stage.executor);
+  return {
+    executor: stage.executor,
+    ready: tools.length > 0,
+    missing: tools.length ? [] : [`未安装或配置 ${stage.executor.slice(7)} 执行插件`],
+    tools: tools.map((tool) => ({ plugin_id: tool.plugin_id, tool: tool.tool, description: tool.description })),
+  };
+}
+
+async function runStudioStage(projectId, stageId) {
+  const project = studio.get(projectId);
+  const stage = project.stages.find((item) => item.id === stageId);
+  if (!stage) throw new Error("制作阶段不存在");
+  if (!llm.configured) throw new Error("请先配置大模型接口，再生成阶段产物");
+  studio.markRunning(projectId, stageId);
+  try {
+    let snapshot = null;
+    let connectionError = "";
+    if (stage.executor === "comfyui" && config.backend.baseUrl) {
+      try { snapshot = await getSnapshot(false, 10000); }
+      catch (error) { connectionError = error.message; }
+    }
+    const capability = stageCapability(stage, snapshot, connectionError);
+    if (snapshot) capability.nodeCatalog = buildNodeCatalog(snapshot.objectInfo, `${project.title} ${stage.name}`).slice(0, 120);
+
+    let sourceReports = project.artifacts?.novel_analysis?.data?.source_reports
+      || project.artifacts?.product_analysis?.data?.source_reports
+      || [];
+    if (stage.order === 1) {
+      const chunks = splitLongText(project.source.text);
+      sourceReports = [];
+      for (let index = 0; index < chunks.length; index += 1) {
+        sourceReports.push(await llm.summarizeStudioChunk({ chunk: chunks[index], index, total: chunks.length, projectType: project.type }));
+      }
+    }
+
+    const artifact = await llm.produceStudioArtifact({
+      project,
+      stage,
+      previousContext: studio.stageContext(projectId, stageId),
+      sourceReports,
+      capabilities: capability,
+    });
+    if (!artifact.data || typeof artifact.data !== "object" || Array.isArray(artifact.data)) artifact.data = {};
+    if (stage.order === 1) artifact.data.source_reports = sourceReports;
+    const proposedExecution = artifact.execution && typeof artifact.execution === "object" ? artifact.execution : {};
+    artifact.execution = {
+      ...proposedExecution,
+      executor: stage.executor,
+      ready: capability.ready,
+      missing: capability.missing,
+      jobs: Array.isArray(proposedExecution.jobs) ? proposedExecution.jobs : [],
+      mode: stage.executor === "llm" ? "artifact" : "specification_only",
+      requiresApproval: stage.executor !== "llm",
+    };
+    return studio.saveArtifact(projectId, stageId, artifact, stage.executor === "llm" ? "complete" : "specified");
+  } catch (error) {
+    studio.markError(projectId, stageId, error.message);
+    throw error;
+  }
+}
+
 async function handleApi(request, response, url) {
   if (request.method === "GET" && url.pathname === "/api/bootstrap") {
     let connected = false;
@@ -321,7 +415,39 @@ async function handleApi(request, response, url) {
       extensions: extensions.summary(),
       tools: extensions.tools(),
       security: await skillSpectorStatus(),
+      studioProjects: studio.list().slice(0, 8),
     });
+  }
+  if (request.method === "GET" && url.pathname === "/api/studio/pipelines") {
+    const pipelines = Object.fromEntries(Object.entries(STUDIO_PIPELINES).map(([id, pipeline]) => [id, {
+      id,
+      name: pipeline.name,
+      stages: pipeline.stages.map(([stageId, name, executor, instruction], index) => ({ id: stageId, name, executor, instruction, order: index + 1 })),
+    }]));
+    return sendJson(response, 200, { pipelines });
+  }
+  if (request.method === "GET" && url.pathname === "/api/studio/projects") {
+    return sendJson(response, 200, { projects: studio.list() });
+  }
+  if (request.method === "POST" && url.pathname === "/api/studio/projects") {
+    return sendJson(response, 201, { project: studio.create(await readJson(request, 5 * 1024 * 1024)) });
+  }
+  const studioProjectMatch = url.pathname.match(/^\/api\/studio\/projects\/([a-f0-9-]{36})$/);
+  if (request.method === "GET" && studioProjectMatch) {
+    return sendJson(response, 200, { project: studio.get(studioProjectMatch[1]) });
+  }
+  const studioStageMatch = url.pathname.match(/^\/api\/studio\/projects\/([a-f0-9-]{36})\/stages\/([a-z0-9_-]+)\/(run|artifact)$/);
+  if (request.method === "POST" && studioStageMatch) {
+    const [, projectId, stageId, action] = studioStageMatch;
+    if (action === "run") return sendJson(response, 200, { project: await runStudioStage(projectId, stageId) });
+    const body = await readJson(request, 2 * 1024 * 1024);
+    return sendJson(response, 200, { project: studio.saveArtifact(projectId, stageId, body.artifact, body.status === "specified" ? "specified" : "complete") });
+  }
+  const studioNextMatch = url.pathname.match(/^\/api\/studio\/projects\/([a-f0-9-]{36})\/run-next$/);
+  if (request.method === "POST" && studioNextMatch) {
+    const next = studio.nextStage(studioNextMatch[1]);
+    if (!next) throw new Error("所有制作阶段都已完成");
+    return sendJson(response, 200, { project: await runStudioStage(studioNextMatch[1], next.id) });
   }
   if (request.method === "POST" && url.pathname === "/api/setup") {
     saveSettings(config.dataRoot, await readJson(request));
