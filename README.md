@@ -1,23 +1,23 @@
-# Comfy Agent
+# Ropiq
 
-Comfy Agent is a conversation-first control layer for ComfyUI. A user describes the result they want; the agent reads the installed nodes, models, templates, GPU, and VRAM, proposes candidate API workflows, validates them locally, and recommends the best valid graph.
+Ropiq is an independent, conversation-first agent for local generation workflows. A user describes the result they want; Ropiq reads the capabilities exposed by a user-configured backend, proposes candidate graphs, validates them locally, and recommends the best valid workflow.
 
-> Status: early alpha. The planning and safety loop works; installers, model packs, and production billing are roadmap items.
+> Status: early alpha. The planning, validation, approval, and execution loop works. A desktop installer and broader backend support are roadmap items.
 
 ## What works
 
 - OpenAI-compatible, Anthropic, and Gemini model APIs behind one adapter.
-- Live discovery through ComfyUI `/object_info`, `/models`, `/workflow_templates`, and `/system_stats`.
-- Candidate ranking with hard validation for node types, required inputs, links, enums, ranges, paths, and resource risk.
+- Live discovery of backend nodes, models, templates, devices, and memory.
+- Candidate ranking with deterministic validation for node types, required inputs, links, enums, ranges, paths, and resource risk.
 - Human approval before generation, upload, queue clearing, interruption, or memory release.
 - Queue/history inspection, approved-asset upload, output download, and non-secret run records.
-- External ComfyUI or automatic startup of an unpacked ComfyUI Portable runtime.
+- Connection to a generation backend installed and controlled by the user.
 
-Comfy Agent does not bundle checkpoints or claim that every GPU can run every model. Hardware support comes from the selected official ComfyUI/PyTorch distribution; the future installer will select the correct runtime and compatible model pack.
+Ropiq does not distribute or automatically start third-party runtimes, models, nodes, templates, drivers, or assets. Hardware and model support come from the backend and components the user chooses to install under their respective licenses.
 
 ## Quick start
 
-Requires Node.js 22 or later.
+Requires Node.js 22 or later and a separately installed supported generation backend.
 
 ```powershell
 Copy-Item .env.example .env.local
@@ -27,13 +27,15 @@ npm start
 
 Open `http://127.0.0.1:8787`.
 
-Configure an existing ComfyUI server:
+Configure the backend connection:
 
 ```dotenv
-COMFYUI_BASE_URL=http://127.0.0.1:8188
+BACKEND_TYPE=comfyui
+BACKEND_BASE_URL=http://127.0.0.1:8188
+BACKEND_API_TOKEN=
 ```
 
-Or unpack an official portable build to `runtime/ComfyUI_windows_portable/`. When `COMFYUI_BASE_URL` is empty, Comfy Agent finds its embedded Python and starts ComfyUI on loopback automatically. A custom install can be selected with `COMFYUI_HOME` and `COMFYUI_PYTHON`.
+The initial adapter is compatible with the public HTTP API exposed by ComfyUI. ComfyUI is separate software, is not included in Ropiq, and must be obtained and operated by the user. Ropiq is not affiliated with, endorsed by, or sponsored by Comfy Org.
 
 Configure any supported LLM API:
 
@@ -46,17 +48,20 @@ LLM_MODEL=your-model
 
 Local OpenAI-compatible services such as Ollama, vLLM, and LM Studio can leave `LLM_API_KEY` empty.
 
-## Safety model
+## Safety and provenance
 
 - The LLM proposes plans; it cannot bypass the deterministic validator.
 - Side effects require a separate confirmation request.
 - Only files under `assets/approved/` can be uploaded.
 - The server listens on `127.0.0.1` by default.
-- `.env.local`, runtimes, models, user assets, and run data are ignored by Git.
+- `.env.local`, runtimes, models, custom nodes, user assets, and run data are ignored by Git.
+- No third-party logo, interface asset, model, node, workflow, or runtime is part of this repository.
+
+See [Compatibility and independence](docs/COMPATIBILITY.md), [Third-party notices](THIRD_PARTY_NOTICES.md), and [Security](SECURITY.md).
 
 ## Open core
 
-The self-hosted single-user core is licensed under AGPL-3.0-or-later. Paid products may add managed GPU execution, team workspaces, enterprise identity, commercial workflow packs, support, and hosted operations without placing secrets or proprietary assets in this repository. See [Open-core model](docs/OPEN_CORE.md) and [Roadmap](docs/ROADMAP.md).
+The self-hosted single-user core is licensed under AGPL-3.0-or-later. Optional paid products may provide independently implemented hosted execution, team administration, enterprise identity, support, and operations. They must not copy third-party code or restrict rights granted for open-source components. See [Open-core model](docs/OPEN_CORE.md) and [Roadmap](docs/ROADMAP.md).
 
 ## Development
 
@@ -65,4 +70,6 @@ npm test
 npm start
 ```
 
-Pull requests should keep providers, hardware runtimes, and ComfyUI nodes pluggable. Do not commit API keys, model files, generated media, or customer data.
+Pull requests must keep model providers and generation backends pluggable. Do not commit API keys, third-party binaries, model files, custom nodes, generated media, copied interface assets, or customer data.
+
+`Ropiq` is a project name pending formal trademark clearance. No registered-trademark claim is made by this repository.

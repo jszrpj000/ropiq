@@ -1,11 +1,11 @@
 {
-  "name": "comfy-agent",
-  "version": "0.1.0",
-  "description": "A conversation-first agent for planning, validating, and running local ComfyUI workflows.",
+  "name": "ropiq",
+  "version": "0.2.0",
+  "description": "An independent conversation-first agent for planning, validating, and running local generation workflows.",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-or-later",
-  "repository": "github:jszrpj000/comfy-agent",
+  "repository": "github:jszrpj000/ropiq",
   "engines": { "node": ">=22" },
   "scripts": {
     "start": "node server.mjs",

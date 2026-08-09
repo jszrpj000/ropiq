@@ -6,4 +6,5 @@ Before opening a pull request:
 2. Add or update tests for behavior changes.
 3. Run `npm test` on Node.js 22 or later.
 4. Do not add model files, generated media, credentials, or unlicensed assets.
-5. Explain hardware and custom-node assumptions in the pull request.
+5. Do not copy third-party source, branding, interface assets, workflows, nodes, or documentation.
+6. Explain backend, hardware, and custom-node assumptions in the pull request.

@@ -2,6 +2,9 @@
 .env.local
 node_modules/
 runtime/
+models/
+custom_nodes/
+third_party/
 runs/*
 !runs/.gitkeep
 assets/approved/*
