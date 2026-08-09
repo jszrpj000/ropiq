@@ -14,6 +14,7 @@ Ropiq is an independent, conversation-first agent for local generation workflows
 - Connection to a generation backend installed and controlled by the user.
 - A first-run setup wizard for DeepSeek or other OpenAI-compatible, Anthropic, and Gemini APIs.
 - Automatic selection of local `SKILL.md` bundles and declarative plugin tools.
+- Built-in voice-performance guidance that turns scene context and emotional cause into editable volume, pace, breath, pause, emphasis, ending-tone, and pronunciation controls.
 - GitHub catalog discovery with fixed file lists, SHA-256 verification, size limits, and pre-enable security scanning.
 - Optional NVIDIA SkillSpector integration when its `skillspector` executable is installed.
 - Generic cloud-instance status and stop endpoints; stopping always requires explicit confirmation.
@@ -29,7 +30,7 @@ Ropiq does not distribute or automatically start third-party runtimes, models, n
 
 ## Windows installer
 
-Download `Ropiq-Setup-0.4.0-alpha.4.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
+Download `Ropiq-Setup-0.4.0-alpha.5.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
 
 The alpha installer is not code-signed, so Windows may show an unknown-publisher warning. Verify the SHA-256 value published with the release before opening it.
 
