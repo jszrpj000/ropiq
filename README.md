@@ -2,7 +2,7 @@
 
 Ropiq is an independent, conversation-first agent for local generation workflows. A user describes the result they want; Ropiq reads the capabilities exposed by a user-configured backend, proposes candidate graphs, validates them locally, and recommends the best valid workflow.
 
-> Status: installable alpha. The guided configuration, 17-stage AI drama studio, 14-stage product-video studio, planning, extension selection, validation, approval, and execution-specification loop work. Media executor adapters beyond the initial node-graph backend remain roadmap items.
+> Status: installable alpha. The guided configuration, 17-stage AI drama studio, 14-stage product-video studio, planning, extension selection, validation, approval, self-hosted image execution, and result-sync loop work. Video, voice, lip-sync, and editing executor adapters remain roadmap items.
 
 ## What works
 
@@ -18,6 +18,7 @@ Ropiq is an independent, conversation-first agent for local generation workflows
 - Optional NVIDIA SkillSpector integration when its `skillspector` executable is installed.
 - Generic cloud-instance status and stop endpoints; stopping always requires explicit confirmation.
 - Persistent AI drama projects covering novel analysis, adaptation, episodic scripts, character/scene design, storyboard, cinematography, look development, prompts, image/video, voice, lip sync, audio/subtitles, editing, quality control, and delivery.
+- Studio image stages can assemble a trusted local Z-Image workflow when compatible models are installed, require approval, submit it to the user's backend, persist status/errors, and expose generated outputs for download.
 - A separate product-promotion workflow with factual-claim and brand-consistency checks.
 - TXT and Markdown import up to 400,000 characters, chunked source analysis, editable JSON artifacts, per-stage reruns, and automatic downstream invalidation.
 - Honest capability reporting: missing media plugins produce reviewable task specifications instead of fake completion claims.
@@ -26,7 +27,7 @@ Ropiq does not distribute or automatically start third-party runtimes, models, n
 
 ## Windows installer
 
-Download `Ropiq-Setup-0.4.0-alpha.2.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
+Download `Ropiq-Setup-0.4.0-alpha.3.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
 
 The alpha installer is not code-signed, so Windows may show an unknown-publisher warning. Verify the SHA-256 value published with the release before opening it.
 

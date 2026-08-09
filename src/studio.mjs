@@ -170,6 +170,21 @@ export class StudioStore {
     return this.get(id);
   }
 
+  recordExecutionRun(id, stageId, run, status = "running") {
+    if (!run?.promptId) throw new Error("执行记录缺少任务 ID");
+    const project = this.get(id);
+    const artifact = project.artifacts?.[stageId];
+    if (!artifact) throw new Error("请先生成并保存阶段产物");
+    if (!artifact.execution || typeof artifact.execution !== "object") artifact.execution = {};
+    const runs = Array.isArray(artifact.execution.runs) ? artifact.execution.runs : [];
+    const index = runs.findIndex((item) => item.promptId === run.promptId);
+    const next = { ...(index >= 0 ? runs[index] : {}), ...run, updatedAt: new Date().toISOString() };
+    if (index >= 0) runs[index] = next;
+    else runs.push(next);
+    artifact.execution.runs = runs.slice(-50);
+    return this.saveArtifact(id, stageId, artifact, status);
+  }
+
   markRunning(id, stageId) {
     const project = this.get(id);
     const stage = project.stages.find((item) => item.id === stageId);

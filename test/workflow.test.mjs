@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildNodeCatalog, rankCandidates, validateWorkflow } from "../src/workflow.mjs";
+import { buildNodeCatalog, buildTrustedImageCandidate, rankCandidates, validateSelfHostedWorkflow, validateWorkflow } from "../src/workflow.mjs";
 
 const objectInfo = {
   LoadImage: {
@@ -93,4 +93,45 @@ test("catalog honors the serialized character budget", () => {
   const catalog = buildNodeCatalog(manyNodes, "custom", 100, 2500);
   assert.ok(catalog.length < 100);
   assert.ok(JSON.stringify(catalog).length <= 2600);
+});
+
+test("rejects external API generation nodes for Studio execution", () => {
+  const result = validateSelfHostedWorkflow({
+    "1": { class_type: "FluxKontextProImageNode", inputs: { prompt: "boat" } },
+    "2": { class_type: "SaveImage", inputs: { images: ["1", 0] } },
+  });
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join(" "), /外部付费\/API/);
+  assert.match(result.errors.join(" "), /本地模型加载器/);
+});
+
+test("accepts a local loader and sampler chain for Studio execution", () => {
+  const result = validateSelfHostedWorkflow({
+    "1": { class_type: "UNETLoader", inputs: { unet_name: "z_image_turbo_bf16.safetensors" } },
+    "2": { class_type: "KSampler", inputs: { model: ["1", 0] } },
+    "3": { class_type: "SaveImage", inputs: { images: ["2", 0] } },
+  });
+  assert.deepEqual(result, { valid: true, errors: [] });
+});
+
+test("builds a trusted Z-Image workflow from installed local model choices", () => {
+  const choice = (values) => [values, {}];
+  const info = {
+    UNETLoader: { input: { required: { unet_name: choice(["svdq-fp4_r128-z-image-turbo.safetensors", "z_image_turbo_bf16.safetensors"]), weight_dtype: choice(["default"]) } } },
+    ModelSamplingAuraFlow: { input: { required: {} } },
+    CLIPLoader: { input: { required: { clip_name: choice(["qwen3.5_4b_bf16.safetensors", "qwen_3_4b.safetensors"]), type: choice(["lumina2"]), device: choice(["default"]) } } },
+    CLIPTextEncode: { input: { required: {} } },
+    EmptySD3LatentImage: { input: { required: {} } },
+    KSampler: { input: { required: { sampler_name: choice(["res_multistep"]), scheduler: choice(["simple"]) } } },
+    VAELoader: { input: { required: { vae_name: choice(["ae.safetensors"]) } } },
+    VAEDecode: { input: { required: {} } },
+    SaveImage: { input: { required: {} } },
+  };
+  const candidate = buildTrustedImageCandidate(info, { execution: { jobs: [{ positivePrompt: "orange boat", width: 770, height: 768, steps: 8 }] } }, "RopiqStudio/test");
+  assert.equal(candidate.workflow["1"].inputs.unet_name, "z_image_turbo_bf16.safetensors");
+  assert.equal(candidate.workflow["3"].inputs.clip_name, "qwen_3_4b.safetensors");
+  assert.equal(candidate.workflow["4"].inputs.text, "orange boat");
+  assert.equal(candidate.workflow["6"].inputs.width, 768);
+  assert.equal(candidate.workflow["10"].inputs.filename_prefix, "RopiqStudio/test");
+  assert.equal(validateSelfHostedWorkflow(candidate.workflow).valid, true);
 });

@@ -203,13 +203,21 @@
                 </div>
                 <p id="studio-stage-instruction" class="studio-stage-instruction"></p>
                 <div id="studio-stage-capability" class="capability-note"></div>
+                <section id="studio-execution-panel" class="studio-execution-panel" hidden>
+                  <div class="execution-plan-head"><div><span class="header-kicker">VALIDATED GRAPH</span><strong id="studio-execution-title">待执行节点图</strong></div><span id="studio-execution-score" class="score">—</span></div>
+                  <p id="studio-execution-reply" class="muted"></p>
+                  <details><summary>查看节点图 JSON</summary><pre id="studio-execution-workflow"></pre></details>
+                  <div class="studio-execution-actions"><button id="studio-confirm-execution" type="button" class="primary">确认并发送到 ComfyUI</button></div>
+                </section>
                 <label class="artifact-label">阶段产物（JSON，可直接修改）
                   <textarea id="studio-artifact" rows="20" spellcheck="false" placeholder="生成后会显示结构化阶段产物"></textarea>
                 </label>
+                <section class="studio-runs-section"><span class="header-kicker">EXECUTION HISTORY</span><div id="studio-run-list" class="studio-run-list"><p class="muted">暂无执行记录</p></div></section>
                 <p id="studio-action-result" class="form-result"></p>
                 <div class="studio-stage-actions">
                   <button id="studio-save-artifact" type="button" class="secondary">保存修改</button>
                   <button id="studio-run-stage" type="button" class="primary">生成当前阶段</button>
+                  <button id="studio-prepare-execution" type="button" class="secondary" hidden>生成并校验节点图</button>
                   <button id="studio-run-next" type="button" class="secondary">生成下一阶段 →</button>
                 </div>
               </section>

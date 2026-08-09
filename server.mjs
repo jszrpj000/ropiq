@@ -9,7 +9,7 @@ import { ExtensionRegistry } from "./src/extensions.mjs";
 import { LlmClient } from "./src/llm.mjs";
 import { skillSpectorStatus } from "./src/security.mjs";
 import { StudioStore, STUDIO_PIPELINES, splitLongText } from "./src/studio.mjs";
-import { buildNodeCatalog, rankCandidates, validateWorkflow } from "./src/workflow.mjs";
+import { buildNodeCatalog, buildTrustedImageCandidate, rankCandidates, validateSelfHostedWorkflow, validateWorkflow } from "./src/workflow.mjs";
 
 const agentRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = agentRoot;
@@ -136,6 +136,13 @@ function writeRunRecord(plan, status, extra = {}) {
     ...extra,
   };
   fs.writeFileSync(path.join(directory, `${plan.id}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+}
+
+function validateStudioWorkflow(workflow, objectInfo, systemStats) {
+  const structural = validateWorkflow(workflow, objectInfo, systemStats);
+  const policy = validateSelfHostedWorkflow(workflow);
+  const errors = [...structural.errors, ...policy.errors];
+  return { ...structural, valid: errors.length === 0, score: Math.max(0, structural.score - policy.errors.length * 25), errors };
 }
 
 function safeInfoIntent(message) {
@@ -270,12 +277,24 @@ async function confirmPlan(body) {
   if (!plan) throw new Error("计划不存在或服务已重启，请重新生成");
 
   let result;
+  let studioProject = null;
   if (plan.workflow) {
     const snapshot = await getSnapshot(true);
-    const validation = validateWorkflow(plan.workflow, snapshot.objectInfo, snapshot.systemStats);
+    const validation = plan.studio
+      ? validateStudioWorkflow(plan.workflow, snapshot.objectInfo, snapshot.systemStats)
+      : validateWorkflow(plan.workflow, snapshot.objectInfo, snapshot.systemStats);
     if (!validation.valid) throw new Error(`执行前校验失败：${validation.errors.join("；")}`);
     result = await backend.submit(plan.workflow, randomUUID());
     writeRunRecord(plan, "submitted", { prompt_id: result.prompt_id || "" });
+    if (plan.studio && result.prompt_id) {
+      studioProject = studio.recordExecutionRun(plan.studio.projectId, plan.studio.stageId, {
+        promptId: result.prompt_id,
+        status: "submitted",
+        submittedAt: new Date().toISOString(),
+        title: plan.title,
+        validation: plan.validation,
+      }, "running");
+    }
   } else if (plan.actionName === "interrupt") {
     result = await backend.interrupt();
     writeRunRecord(plan, "executed");
@@ -299,7 +318,7 @@ async function confirmPlan(body) {
     throw new Error("该操作不支持确认执行");
   }
   plans.delete(plan.id);
-  return { ok: true, result };
+  return { ok: true, result, studioProject };
 }
 
 const executorKeywords = {
@@ -393,6 +412,121 @@ async function runStudioStage(projectId, stageId) {
   }
 }
 
+async function prepareStudioExecution(projectId, stageId) {
+  const project = studio.get(projectId);
+  const stage = project.stages.find((item) => item.id === stageId);
+  if (!stage) throw new Error("制作阶段不存在");
+  if (stage.executor !== "comfyui") throw new Error("当前阶段不是节点图生成阶段");
+  const artifact = project.artifacts?.[stageId];
+  if (!artifact) throw new Error("请先生成并检查该阶段的任务规格");
+  if (!llm.configured) throw new Error("请先配置大模型接口");
+
+  const snapshot = await getSnapshot(true, 30000);
+  const artifactText = JSON.stringify(artifact).slice(0, 30000);
+  const message = `请为制作项目“${project.title}”的“${stage.name}”阶段生成一个可直接提交的 ComfyUI API 工作流。
+
+项目设置：${JSON.stringify(project.settings)}
+经过用户检查的阶段产物：${artifactText}
+
+要求：
+1. 只使用当前节点目录中真实存在的节点、模型、枚举和输入。
+2. 遵循阶段产物中的镜头、提示词、尺寸、预算和先预览策略；如果有多个任务，当前先生成一个代表性预览。
+3. 必须包含真实输出节点，输出前缀使用 RopiqStudio/${project.id.slice(0, 8)}-${stage.id}。
+4. 不得执行，只返回 workflow 候选并等待人工确认。
+5. 不得引入阶段产物未授权的人物、品牌、声音、模型或素材。
+6. 禁止 FluxKontextPro、OpenAI、Gemini、Kling、Runway、Replicate、fal、Stability API 等任何外部付费/API 生成节点。
+7. 必须使用部署在当前 ComfyUI 内的本地模型加载器、模型文件和本地采样节点；图像工作流优先使用 UNETLoader、CLIPLoader、VAELoader、KSampler、VAEDecode、SaveImage 等真实可用节点。`;
+  const summary = summarizeSnapshot(snapshot);
+  summary.approved_assets = listApprovedAssets();
+  const selectedSkills = extensions.selectSkills(`${project.title} ${stage.name} ${artifactText}`);
+  const trusted = /image/i.test(stageId)
+    ? buildTrustedImageCandidate(snapshot.objectInfo, artifact, `RopiqStudio/${project.id.slice(0, 8)}-${stage.id}`)
+    : null;
+  const result = trusted
+    ? { intent: "workflow", reply: "已根据当前 ComfyUI 中的本地模型和节点生成受信任工作流。", candidates: [trusted] }
+    : await llm.plan({
+      message,
+      catalog: buildNodeCatalog(snapshot.objectInfo, `${message} local model UNETLoader CLIPLoader VAELoader KSampler VAEDecode SaveImage ${artifactText}`),
+      summary,
+      skills: selectedSkills,
+      tools: extensions.tools().filter((tool) => tool.configured),
+      availableExtensions: [],
+    });
+  if (result.intent !== "workflow") throw new Error("大模型没有返回可校验的节点工作流");
+  const ranked = (Array.isArray(result.candidates) ? result.candidates : []).map((candidate, index) => ({
+    ...candidate,
+    validation: validateStudioWorkflow(candidate.workflow, snapshot.objectInfo, snapshot.systemStats),
+    originalIndex: index,
+  })).sort((a, b) => b.validation.score - a.validation.score || a.originalIndex - b.originalIndex);
+  if (!ranked.length) throw new Error("大模型没有返回工作流候选");
+  const recommended = ranked[0];
+  if (!recommended.validation.valid) throw new Error(`候选工作流未通过本地校验：${recommended.validation.errors.slice(0, 8).join("；")}`);
+
+  const id = randomUUID();
+  const plan = {
+    id,
+    message,
+    workflow: recommended.workflow,
+    validation: recommended.validation,
+    title: recommended.title || `${project.title} · ${stage.name}`,
+    skills: selectedSkills.map((skill) => skill.id),
+    studio: { projectId, stageId },
+  };
+  plans.set(id, plan);
+  writeRunRecord(plan, "planned", { studio_project_id: projectId, studio_stage_id: stageId });
+  return {
+    kind: "studio_execution",
+    planId: id,
+    reply: result.reply || "节点图已生成并通过本地校验，等待确认执行。",
+    usedSkills: plan.skills,
+    recommended: { title: plan.title, rationale: recommended.rationale || "", workflow: recommended.workflow, validation: recommended.validation },
+  };
+}
+
+function collectJobOutputs(job) {
+  const outputs = [];
+  for (const [nodeId, nodeOutput] of Object.entries(job?.outputs || {})) {
+    for (const [kind, values] of Object.entries(nodeOutput || {})) {
+      if (!Array.isArray(values)) continue;
+      for (const value of values) {
+        if (!value?.filename) continue;
+        const params = new URLSearchParams({ filename: value.filename, subfolder: value.subfolder || "", type: value.type || "output" });
+        outputs.push({ nodeId, kind, filename: value.filename, subfolder: value.subfolder || "", type: value.type || "output", downloadUrl: `/api/output?${params}` });
+      }
+    }
+  }
+  return outputs;
+}
+
+function jobError(job) {
+  const messages = Array.isArray(job?.status?.messages) ? job.status.messages : [];
+  const error = [...messages].reverse().find((item) => Array.isArray(item) && item[0] === "execution_error");
+  return String(error?.[1]?.exception_message || error?.[1]?.exception_type || "云端执行失败").slice(0, 1000);
+}
+
+async function syncStudioExecution(projectId, stageId, promptId) {
+  const project = studio.get(projectId);
+  const runs = project.artifacts?.[stageId]?.execution?.runs || [];
+  const existing = runs.find((item) => item.promptId === promptId);
+  if (!existing) throw new Error("项目中不存在该执行任务");
+  const history = await backend.history(promptId);
+  const job = history?.[promptId];
+  if (!job) return { completed: false, run: existing, project };
+  if (!job.status?.completed) return { completed: false, run: { ...existing, status: "running" }, project };
+
+  const success = job.status.status_str === "success";
+  const run = {
+    ...existing,
+    status: success ? "success" : "error",
+    completedAt: new Date().toISOString(),
+    outputs: collectJobOutputs(job),
+    error: success ? "" : jobError(job),
+  };
+  const updated = studio.recordExecutionRun(projectId, stageId, run, success ? "complete" : "error");
+  writeRunRecord({ id: promptId, message: `${project.title} / ${stageId}`, actionName: "studio_execution" }, success ? "completed" : "failed", { prompt_id: promptId, outputs: run.outputs, error: run.error });
+  return { completed: true, run, project: updated };
+}
+
 async function handleApi(request, response, url) {
   if (request.method === "GET" && url.pathname === "/api/bootstrap") {
     let connected = false;
@@ -436,12 +570,17 @@ async function handleApi(request, response, url) {
   if (request.method === "GET" && studioProjectMatch) {
     return sendJson(response, 200, { project: studio.get(studioProjectMatch[1]) });
   }
-  const studioStageMatch = url.pathname.match(/^\/api\/studio\/projects\/([a-f0-9-]{36})\/stages\/([a-z0-9_-]+)\/(run|artifact)$/);
+  const studioStageMatch = url.pathname.match(/^\/api\/studio\/projects\/([a-f0-9-]{36})\/stages\/([a-z0-9_-]+)\/(run|artifact|prepare-execution)$/);
   if (request.method === "POST" && studioStageMatch) {
     const [, projectId, stageId, action] = studioStageMatch;
     if (action === "run") return sendJson(response, 200, { project: await runStudioStage(projectId, stageId) });
+    if (action === "prepare-execution") return sendJson(response, 200, await prepareStudioExecution(projectId, stageId));
     const body = await readJson(request, 2 * 1024 * 1024);
     return sendJson(response, 200, { project: studio.saveArtifact(projectId, stageId, body.artifact, body.status === "specified" ? "specified" : "complete") });
+  }
+  const studioRunMatch = url.pathname.match(/^\/api\/studio\/projects\/([a-f0-9-]{36})\/stages\/([a-z0-9_-]+)\/runs\/([a-f0-9-]{36})\/sync$/);
+  if (request.method === "POST" && studioRunMatch) {
+    return sendJson(response, 200, await syncStudioExecution(studioRunMatch[1], studioRunMatch[2], studioRunMatch[3]));
   }
   const studioNextMatch = url.pathname.match(/^\/api\/studio\/projects\/([a-f0-9-]{36})\/run-next$/);
   if (request.method === "POST" && studioNextMatch) {

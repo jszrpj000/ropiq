@@ -33,3 +33,16 @@ test("keeps the complete maximum-size source across chunks", () => {
   assert.equal(chunks.join(""), source);
   assert.ok(chunks.length <= 32);
 });
+
+test("persists and updates media execution runs", () => {
+  const store = new StudioStore(fs.mkdtempSync(path.join(os.tmpdir(), "ropiq-studio-run-")));
+  let project = store.create({ type: "drama", title: "Run", sourceText: "故事。" });
+  project = store.saveArtifact(project.id, "image_generation", { summary: "关键帧", execution: { executor: "comfyui", jobs: [] } }, "specified");
+  project = store.recordExecutionRun(project.id, "image_generation", { promptId: "prompt-1", status: "submitted" });
+  assert.equal(project.stages.find((item) => item.id === "image_generation").status, "running");
+  assert.equal(project.artifacts.image_generation.execution.runs[0].status, "submitted");
+  project = store.recordExecutionRun(project.id, "image_generation", { promptId: "prompt-1", status: "success", outputs: [{ filename: "frame.png" }] }, "complete");
+  assert.equal(project.artifacts.image_generation.execution.runs.length, 1);
+  assert.equal(project.artifacts.image_generation.execution.runs[0].outputs[0].filename, "frame.png");
+  assert.equal(project.stages.find((item) => item.id === "image_generation").status, "complete");
+});
