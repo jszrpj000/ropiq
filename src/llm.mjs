@@ -99,6 +99,90 @@ export class LlmClient {
     throw new Error(`不支持的 LLM_PROVIDER: ${this.config.provider}`);
   }
 
+  async generateJson(system, userContent) {
+    const messages = [{ role: "user", content: `${userContent}\n只返回一个完整、非空、合法的 JSON 对象。` }];
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try { return parseJsonContent(await this.generate(system, messages)); }
+      catch (error) {
+        lastError = error;
+        if (/API 请求失败|需要 LLM_API_KEY|不支持/.test(error.message)) throw error;
+        messages.push({ role: "user", content: "上次返回无法解析。不要使用 Markdown，只返回 JSON。" });
+      }
+    }
+    throw lastError || new Error("大模型未返回有效 JSON");
+  }
+
+  async summarizeStudioChunk({ chunk, index, total, projectType }) {
+    if (!this.configured) throw new Error("请先配置大模型接口");
+    const system = `你是 Ropiq 的长文本解析器。你正在处理${projectType === "drama" ? "小说/故事" : "商品资料"}的第 ${index + 1}/${total} 段。忠于原文，不补写未出现的事实。
+
+输出 JSON：
+{
+  "segment": ${index + 1},
+  "summary": "本段摘要",
+  "characters_or_entities": [{"name":"", "facts":[], "changes":[]}],
+  "events_or_claims": [{"order":1, "description":"", "evidence":""}],
+  "locations_or_context": [],
+  "conflicts_or_selling_points": [],
+  "clues_or_constraints": [],
+  "uncertainties": []
+}`;
+    return this.generateJson(system, chunk);
+  }
+
+  async produceStudioArtifact({ project, stage, previousContext = "", sourceReports = [], capabilities = {} }) {
+    if (!this.configured) throw new Error("请先配置大模型接口");
+    const executionRule = stage.executor === "llm"
+      ? "本阶段只生成结构化创作产物。"
+      : `本阶段执行器为 ${stage.executor}。只生成可验证的执行任务规格；不得声称已经生成媒体。执行器未就绪时，将 execution.ready 设为 false 并列出 missing。`;
+    const system = `你是 Ropiq 的 AI 影视制作智能体，当前负责“${stage.name}”。
+
+阶段目标：${stage.instruction}
+${executionRule}
+
+必须输出：
+{
+  "summary": "本阶段成果摘要",
+  "data": {"结构化阶段产物": "内容"},
+  "decisions": [{"item":"", "choice":"", "reason":""}],
+  "continuity": [{"anchor":"", "must_keep":""}],
+  "risks": [{"level":"low|medium|high", "issue":"", "mitigation":""}],
+  "execution": {
+    "executor": "${stage.executor}",
+    "ready": ${stage.executor === "llm" ? "true" : "false"},
+    "missing": [],
+    "jobs": [{"id":"", "purpose":"", "inputs":{}, "expected_outputs":[], "estimated_cost_cny":0}]
+  }
+}
+
+规则：
+1. 使用中文，镜头、角色、场景和资产必须有稳定 ID。
+2. 遵守项目预算和先预览后高质量生成策略。
+3. 不得编造后端未安装的模型、节点、声音或插件。
+4. 不得使用未经授权的小说、品牌、人物肖像、真人声音、音乐或模型。
+5. 生成内容必须保留 AI 标识和来源记录要求。
+6. 信息不足时写入 risks 和 decisions，不要偷偷假设高影响内容。
+
+当前执行能力：${JSON.stringify(capabilities)}`;
+    const projectSummary = {
+      id: project.id,
+      type: project.type,
+      title: project.title,
+      settings: project.settings,
+      source_filename: project.source.filename,
+      source_length: project.source.text.length,
+    };
+    const user = `项目：${JSON.stringify(projectSummary)}
+
+长文本分段报告：${JSON.stringify(sourceReports).slice(0, 50000)}
+
+最近上游阶段：${previousContext || "（无）"}
+
+请完成“${stage.name}”并返回阶段产物。`;
+    return this.generateJson(system, user);
+  }
+
   async plan({ message, history = [], catalog, summary, skills = [], tools = [], availableExtensions = [] }) {
     if (!this.configured) throw new Error("请配置 LLM_BASE_URL 和 LLM_MODEL");
     const system = systemPrompt(catalog, summary, skills, tools, availableExtensions);

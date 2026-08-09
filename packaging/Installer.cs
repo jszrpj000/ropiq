@@ -26,8 +26,8 @@ internal sealed class InstallForm : Form
         Font = new Font("Microsoft YaHei UI", 9F);
 
         Label brand = NewLabel("ROPIQ", 34, 28, 480, 28, 18F, FontStyle.Bold, Color.FromArgb(255, 176, 106));
-        Label title = NewLabel("对话式生成工作流智能体", 34, 70, 480, 32, 16F, FontStyle.Bold, ForeColor);
-        Label copy = NewLabel("安装后直接打开配置向导。支持自选大模型 API、本地或云端生成后端、自动 Skills 与安全插件。", 34, 114, 480, 55, 9F, FontStyle.Regular, Color.FromArgb(150, 166, 176));
+        Label title = NewLabel("AI 短剧与商品视频制作智能体", 34, 70, 480, 32, 16F, FontStyle.Bold, ForeColor);
+        Label copy = NewLabel("安装后直接打开制作台。支持自选大模型 API、本地或云端生成后端、17 阶段短剧制作与安全扩展。", 34, 114, 480, 55, 9F, FontStyle.Regular, Color.FromArgb(150, 166, 176));
         desktopShortcut.Text = "创建桌面快捷方式";
         desktopShortcut.Checked = true;
         desktopShortcut.SetBounds(34, 196, 300, 26);
@@ -127,7 +127,7 @@ internal sealed class InstallForm : Form
         using (RegistryKey key = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Ropiq"))
         {
             key.SetValue("DisplayName", "Ropiq");
-            key.SetValue("DisplayVersion", "0.3.0-alpha.1");
+            key.SetValue("DisplayVersion", "0.4.0-alpha.1");
             key.SetValue("Publisher", "Ropiq Open Source Project");
             key.SetValue("InstallLocation", target);
             key.SetValue("UninstallString", "\"" + Path.Combine(target, "RopiqUninstall.exe") + "\"");

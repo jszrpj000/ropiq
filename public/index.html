@@ -17,6 +17,8 @@
       </div>
 
       <button id="new-chat" class="new-session"><span>＋</span> 新建会话</button>
+      <button id="open-drama-studio" class="rail-tool"><span>▶</span> AI 短剧工坊</button>
+      <button id="open-product-studio" class="rail-tool"><span>◆</span> 商品视频工坊</button>
       <button id="open-setup" class="rail-tool"><span>⚙</span> 连接与配置</button>
       <button id="open-extensions" class="rail-tool"><span>⬡</span> Skills 与插件</button>
 
@@ -146,6 +148,76 @@
     <div id="installed-extensions" class="extension-list"></div>
     <div class="catalog-head"><strong>GitHub 可安装目录</strong><button id="refresh-catalog" class="secondary">刷新</button></div>
     <div id="catalog-extensions" class="extension-list"><p class="muted">点击刷新读取目录。</p></div>
+  </dialog>
+
+  <dialog id="studio-dialog" class="modal studio-modal">
+    <div class="studio-shell">
+      <header class="studio-header">
+        <div>
+          <span class="header-kicker">PRODUCTION STUDIO</span>
+          <h2 id="studio-title">AI 短剧工坊</h2>
+          <p>从原始内容到成片的可编辑、可追踪生产链</p>
+        </div>
+        <button type="button" class="icon-button" data-close="studio-dialog" aria-label="关闭">×</button>
+      </header>
+      <div class="studio-body">
+        <aside class="studio-sidebar">
+          <button id="studio-new-project" class="primary studio-new">＋ 新建项目</button>
+          <p class="rail-label">项目库</p>
+          <div id="studio-project-list" class="studio-project-list"><p class="muted">正在读取项目…</p></div>
+        </aside>
+        <main class="studio-main">
+          <form id="studio-create-form" class="studio-create-view">
+            <input type="hidden" name="type" value="drama">
+            <div class="studio-intro">
+              <span class="header-kicker">NEW PROJECT</span>
+              <h3 id="studio-create-heading">创建 AI 短剧项目</h3>
+              <p id="studio-create-copy">导入有权使用的小说或故事，智能体会按完整 17 阶段生产链逐步处理。</p>
+            </div>
+            <div class="form-grid studio-form-grid">
+              <label class="wide">项目名称<input name="title" maxlength="120" placeholder="例如：雾港来信"></label>
+              <label class="wide">导入 TXT 或 Markdown<input id="studio-source-file" name="sourceFile" type="file" accept=".txt,.md,.markdown,text/plain,text/markdown"></label>
+              <label class="wide">原始内容<textarea name="sourceText" rows="10" maxlength="400000" placeholder="粘贴小说、故事，或商品资料、受众、卖点和合规限制…" required></textarea><small id="studio-source-count">0 / 400000 字符</small></label>
+              <label>集数<input name="episodes" type="number" min="1" max="100" value="1"></label>
+              <label>单集/成片时长（秒）<input name="episodeSeconds" type="number" min="10" max="1800" value="90"></label>
+              <label>画幅<select name="aspectRatio"><option value="9:16">9:16 竖屏</option><option value="16:9">16:9 横屏</option><option value="1:1">1:1 方形</option></select></label>
+              <label>预算上限（元）<input name="budgetCny" type="number" min="0" step="1" value="0"></label>
+              <label class="wide">视觉方向<input name="style" maxlength="200" value="写实电影感" placeholder="例如：写实电影感、东方悬疑、干净棚拍"></label>
+              <label class="wide check-label"><input name="previewFirst" type="checkbox" checked> 先生成低成本预览，确认后再进行高质量执行</label>
+            </div>
+            <p id="studio-create-result" class="form-result"></p>
+            <div class="studio-create-actions"><button type="submit" class="primary">创建并进入制作台</button></div>
+          </form>
+
+          <section id="studio-workspace" class="studio-workspace" hidden>
+            <header class="studio-project-head">
+              <div><span id="studio-project-type" class="header-kicker">AI DRAMA</span><h3 id="studio-project-name">项目</h3><p id="studio-project-meta"></p></div>
+              <div class="studio-progress-block"><strong id="studio-progress-label">0 / 17</strong><div class="studio-progress"><i id="studio-progress-bar"></i></div></div>
+            </header>
+            <div class="studio-production-grid">
+              <nav id="studio-stages" class="studio-stages" aria-label="制作阶段"></nav>
+              <section class="studio-stage-detail">
+                <div class="studio-stage-head">
+                  <div><span id="studio-stage-order" class="header-kicker">STAGE 01</span><h3 id="studio-stage-name">小说解析</h3></div>
+                  <span id="studio-stage-status" class="stage-status pending">待生成</span>
+                </div>
+                <p id="studio-stage-instruction" class="studio-stage-instruction"></p>
+                <div id="studio-stage-capability" class="capability-note"></div>
+                <label class="artifact-label">阶段产物（JSON，可直接修改）
+                  <textarea id="studio-artifact" rows="20" spellcheck="false" placeholder="生成后会显示结构化阶段产物"></textarea>
+                </label>
+                <p id="studio-action-result" class="form-result"></p>
+                <div class="studio-stage-actions">
+                  <button id="studio-save-artifact" type="button" class="secondary">保存修改</button>
+                  <button id="studio-run-stage" type="button" class="primary">生成当前阶段</button>
+                  <button id="studio-run-next" type="button" class="secondary">生成下一阶段 →</button>
+                </div>
+              </section>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
   </dialog>
   <script type="module" src="/app.js"></script>
 </body>

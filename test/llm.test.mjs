@@ -50,3 +50,33 @@ test("maps Gemini generateContent responses to the common planner contract", asy
   const result = await client.plan({ message: "help", catalog: [], summary: {} });
   assert.equal(result.reply, "gemini");
 });
+
+test("summarizes long-form studio input into structured source reports", async () => {
+  let requestBody;
+  const fakeFetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"segment":1,"summary":"港口相遇","characters_or_entities":[],"events_or_claims":[],"locations_or_context":[],"conflicts_or_selling_points":[],"clues_or_constraints":[],"uncertainties":[]}' } }] }), { status: 200 });
+  };
+  const client = new LlmClient({ provider: "openai-compatible", baseUrl: "http://local/v1", model: "test", apiKey: "", jsonMode: true }, fakeFetch);
+  const result = await client.summarizeStudioChunk({ chunk: "主角来到港口。", index: 0, total: 2, projectType: "drama" });
+  assert.equal(result.summary, "港口相遇");
+  assert.match(requestBody.messages[0].content, /第 1\/2 段/);
+  assert.match(requestBody.messages[1].content, /主角来到港口/);
+});
+
+test("produces media execution specifications without claiming execution", async () => {
+  let requestBody;
+  const fakeFetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"summary":"关键帧任务","data":{"shots":[]},"decisions":[],"continuity":[],"risks":[],"execution":{"executor":"comfyui","ready":false,"missing":["节点缺失"],"jobs":[]}}' } }] }), { status: 200 });
+  };
+  const client = new LlmClient({ provider: "openai-compatible", baseUrl: "http://local/v1", model: "test", apiKey: "", jsonMode: true }, fakeFetch);
+  const result = await client.produceStudioArtifact({
+    project: { id: "project", type: "drama", title: "雾港", settings: {}, source: { filename: "novel.txt", text: "原文" } },
+    stage: { id: "image_generation", name: "图像生成", executor: "comfyui", instruction: "生成关键帧任务" },
+    capabilities: { ready: false, missing: ["后端未连接"] },
+  });
+  assert.equal(result.execution.ready, false);
+  assert.match(requestBody.messages[0].content, /不得声称已经生成媒体/);
+  assert.match(requestBody.messages[0].content, /后端未连接/);
+});
