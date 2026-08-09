@@ -1,0 +1,14 @@
+{
+  "name": "comfy-agent",
+  "version": "0.1.0",
+  "description": "A conversation-first agent for planning, validating, and running local ComfyUI workflows.",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "repository": "github:jszrpj000/comfy-agent",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Comfy Agent</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">C</span><div><strong>Comfy Agent</strong><small>对话式工作流</small></div></div>
+      <button id="new-chat" class="new-chat">＋ 新任务</button>
+      <nav class="quick-actions" aria-label="快捷指令">
+        <button data-prompt="检查环境状态">环境状态</button>
+        <button data-prompt="查看队列">执行队列</button>
+        <button data-prompt="列出当前可用模型，并按用途分组">模型能力</button>
+        <button data-prompt="释放显存">释放显存</button>
+      </nav>
+      <div class="sidebar-status">
+        <div><span id="comfy-dot" class="dot"></span><span id="comfy-status">ComfyUI 检查中</span></div>
+        <div><span id="llm-dot" class="dot"></span><span id="llm-status">模型接口检查中</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><strong>智能工作流</strong><span id="model-label">未配置模型</span></div>
+        <span class="safety">执行前确认已开启</span>
+      </header>
+      <section id="conversation" class="conversation" aria-live="polite">
+        <article class="message assistant">
+          <div class="avatar">C</div>
+          <div class="message-body">
+            <p>告诉我想生成什么。我会读取当前 ComfyUI 的节点、模型和显存，搭建并校验最合适的工作流。</p>
+            <p class="muted">例如：“用这张菜品图生成 5 秒竖屏慢推镜头，优先保证食物不变形。”</p>
+          </div>
+        </article>
+      </section>
+      <form id="composer" class="composer">
+        <textarea id="prompt" rows="1" placeholder="描述目标，或输入“检查环境状态”…" required></textarea>
+        <button id="send" type="submit" aria-label="发送">↑</button>
+        <div class="composer-note">智能体会自动选择节点、模型和参数；生成、上传及队列操作仍需确认。</div>
+      </form>
+    </main>
+
+    <aside class="inspector">
+      <h2>当前环境</h2>
+      <div id="environment" class="environment"><p class="muted">正在读取…</p></div>
+      <h2>已授权素材</h2>
+      <div id="assets" class="asset-list"><p class="muted">正在读取…</p></div>
+    </aside>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
