@@ -2,20 +2,25 @@
 
 ## Alpha
 
-- Stabilize workflow generation against diverse custom-node catalogs.
-- Add repair loops using ComfyUI validation and execution errors.
-- Show live WebSocket progress and generated previews in chat.
-- Add runtime fixtures and end-to-end tests with a real ComfyUI instance.
+- Stabilize workflow generation against diverse user-installed node catalogs.
+- Add repair loops using backend validation and execution errors.
+- Show live progress and generated previews in chat.
+- Add end-to-end tests against separately provisioned backend fixtures.
+- Add a second independently implemented backend adapter.
 
 ## Desktop beta
 
-- Package the agent, Node runtime, and official hardware-specific ComfyUI distributions.
-- Detect NVIDIA, AMD, Intel, Apple Silicon, and CPU capabilities.
-- Offer compatible starter model packs with explicit download size and license information.
-- Add installer repair, upgrades, rollback, and diagnostics.
+- Package only Ropiq and its required open-source application runtime.
+- Guide users through connecting a separately installed generation backend.
+- Report hardware capabilities exposed by the connected backend.
+- Add configuration repair, application upgrades, rollback, and diagnostics.
+- Display third-party license links before enabling optional integrations.
+
+Ropiq will not bundle third-party generation runtimes, GPU drivers, models, custom nodes, or workflow packs.
 
 ## Production
 
-- Signed releases and reproducible builds.
-- Plugin API and compatibility registry.
-- Optional managed GPU, team, and enterprise modules.
+- Signed, reproducible Ropiq releases.
+- Documented backend adapter API and compatibility test suite.
+- Software bill of materials and automated license checks.
+- Optional managed GPU, team, and enterprise services implemented as separate products.

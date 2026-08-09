@@ -3,52 +3,90 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Comfy Agent</title>
+  <meta name="description" content="Ropiq 是一个独立的对话式生成工作流智能体。">
+  <title>Ropiq</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">C</span><div><strong>Comfy Agent</strong><small>对话式工作流</small></div></div>
-      <button id="new-chat" class="new-chat">＋ 新任务</button>
-      <nav class="quick-actions" aria-label="快捷指令">
-        <button data-prompt="检查环境状态">环境状态</button>
-        <button data-prompt="查看队列">执行队列</button>
-        <button data-prompt="列出当前可用模型，并按用途分组">模型能力</button>
-        <button data-prompt="释放显存">释放显存</button>
-      </nav>
-      <div class="sidebar-status">
-        <div><span id="comfy-dot" class="dot"></span><span id="comfy-status">ComfyUI 检查中</span></div>
-        <div><span id="llm-dot" class="dot"></span><span id="llm-status">模型接口检查中</span></div>
+  <div class="app-shell">
+    <aside class="rail">
+      <div class="brand">
+        <span class="brand-glyph" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div><strong>Ropiq</strong><small>生成工作流智能体</small></div>
+      </div>
+
+      <button id="new-chat" class="new-session"><span>＋</span> 新建会话</button>
+
+      <div class="rail-section">
+        <p class="rail-label">快捷指令</p>
+        <nav class="quick-actions" aria-label="快捷指令">
+          <button data-prompt="检查当前生成环境状态"><span>01</span>环境状态</button>
+          <button data-prompt="查看当前执行队列"><span>02</span>执行队列</button>
+          <button data-prompt="列出当前可用模型，并按用途分组"><span>03</span>模型能力</button>
+          <button data-prompt="释放显存"><span>04</span>释放显存</button>
+        </nav>
+      </div>
+
+      <div class="connection-card">
+        <p class="rail-label">连接</p>
+        <div><span id="backend-dot" class="status-dot"></span><span id="backend-status">生成后端检查中</span></div>
+        <div><span id="llm-dot" class="status-dot"></span><span id="llm-status">模型接口检查中</span></div>
       </div>
     </aside>
 
-    <main class="main">
-      <header class="topbar">
-        <div><strong>智能工作流</strong><span id="model-label">未配置模型</span></div>
-        <span class="safety">执行前确认已开启</span>
+    <main class="workspace">
+      <header class="workspace-header">
+        <div>
+          <span class="header-kicker">STUDIO</span>
+          <strong>创作会话</strong>
+        </div>
+        <div class="header-meta">
+          <span id="model-label">未配置模型</span>
+          <span class="guard-badge"><i></i>本地校验 · 人工确认</span>
+        </div>
       </header>
+
       <section id="conversation" class="conversation" aria-live="polite">
-        <article class="message assistant">
-          <div class="avatar">C</div>
+        <article class="message assistant welcome">
+          <div class="assistant-mark">R</div>
           <div class="message-body">
-            <p>告诉我想生成什么。我会读取当前 ComfyUI 的节点、模型和显存，搭建并校验最合适的工作流。</p>
-            <p class="muted">例如：“用这张菜品图生成 5 秒竖屏慢推镜头，优先保证食物不变形。”</p>
+            <span class="message-label">ROPIQ</span>
+            <h1>把结果说清楚，流程交给我。</h1>
+            <p>我会读取你已连接环境中的节点、模型和资源，生成候选工作流，先在本地校验，再交给你确认执行。</p>
+            <div class="prompt-examples">
+              <button data-prompt="为一张产品照片设计干净的棚拍增强方案，保持主体结构不变">产品图增强</button>
+              <button data-prompt="设计一个竖屏五秒镜头，节奏平稳，优先保证主体一致性">竖屏短镜头</button>
+              <button data-prompt="分析当前环境适合运行哪些工作流，并说明显存风险">环境能力分析</button>
+            </div>
           </div>
         </article>
       </section>
+
       <form id="composer" class="composer">
-        <textarea id="prompt" rows="1" placeholder="描述目标，或输入“检查环境状态”…" required></textarea>
-        <button id="send" type="submit" aria-label="发送">↑</button>
-        <div class="composer-note">智能体会自动选择节点、模型和参数；生成、上传及队列操作仍需确认。</div>
+        <textarea id="prompt" rows="1" placeholder="描述你想得到的画面、视频或处理结果…" required></textarea>
+        <button id="send" type="submit" aria-label="发送">↗</button>
+        <div class="composer-footer">
+          <span>Enter 发送 · Shift + Enter 换行</span>
+          <span>执行前始终需要确认</span>
+        </div>
       </form>
     </main>
 
-    <aside class="inspector">
-      <h2>当前环境</h2>
-      <div id="environment" class="environment"><p class="muted">正在读取…</p></div>
-      <h2>已授权素材</h2>
-      <div id="assets" class="asset-list"><p class="muted">正在读取…</p></div>
+    <aside class="context-panel">
+      <div class="context-head">
+        <span class="header-kicker">CONTEXT</span>
+        <h2>运行上下文</h2>
+        <p>信息只来自你主动连接的本地环境。</p>
+      </div>
+      <section>
+        <h3>环境摘要</h3>
+        <div id="environment" class="environment"><p class="muted">正在读取…</p></div>
+      </section>
+      <section>
+        <h3>已授权素材</h3>
+        <div id="assets" class="asset-list"><p class="muted">正在读取…</p></div>
+      </section>
+      <div class="privacy-note"><span>LOCAL</span> 默认仅监听 127.0.0.1，不上传密钥和运行记录。</div>
     </aside>
   </div>
   <script type="module" src="/app.js"></script>

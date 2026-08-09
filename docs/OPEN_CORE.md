@@ -1,20 +1,19 @@
 # Open-core model
 
-Comfy Agent separates the local generation core from optional commercial services.
+Ropiq separates its local generation-planning core from optional commercial services.
 
 ## Open-source core
 
-- Conversation UI and provider-neutral LLM adapter.
-- Local and external ComfyUI connectivity.
-- Node/model discovery, workflow planning, validation, approvals, and execution controls.
+- Original conversation interface and provider-neutral LLM adapter.
+- User-configured backend connectivity through documented network interfaces.
+- Capability discovery, workflow planning, validation, approvals, and execution controls.
 - Local run records and approved-asset boundaries.
-- Hardware/runtime integration points.
+- Backend adapter integration points.
 
 ## Potential paid products
 
-- Managed cloud GPU execution and cost controls.
+- Independently implemented managed GPU execution and cost controls.
 - Team workspaces, roles, audit retention, SSO, and policy administration.
-- Commercial workflow/model packs with verified compatibility matrices.
-- Batch orchestration, scheduling, monitoring, and priority support.
+- Batch orchestration, scheduling, monitoring, and support.
 
-Paid features must use documented interfaces and must not weaken local validation or approval gates. Names, pricing, and entitlement protocols are intentionally outside the alpha core.
+Paid products must communicate through documented interfaces, preserve all open-source rights, and contain no copied third-party code, brand assets, models, nodes, templates, or workflows without a separate written license.

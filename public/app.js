@@ -2,7 +2,7 @@ const conversation = document.querySelector("#conversation");
 const form = document.querySelector("#composer");
 const promptInput = document.querySelector("#prompt");
 const sendButton = document.querySelector("#send");
-let sessionId = sessionStorage.getItem("comfy-agent-session") || "";
+let sessionId = sessionStorage.getItem("ropiq-session") || "";
 
 async function api(url, options = {}) {
   const response = await fetch(url, {
@@ -21,6 +21,10 @@ function element(tag, className, text) {
   return node;
 }
 
+function scrollToBottom() {
+  conversation.scrollTop = conversation.scrollHeight;
+}
+
 function addUserMessage(text) {
   const article = element("article", "message user");
   const body = element("div", "message-body");
@@ -32,17 +36,13 @@ function addUserMessage(text) {
 
 function addAssistantMessage(reply, className = "") {
   const article = element("article", `message assistant ${className}`.trim());
-  article.append(element("div", "avatar", "C"));
+  article.append(element("div", "assistant-mark", "R"));
   const body = element("div", "message-body");
-  body.append(element("p", "", reply));
+  body.append(element("span", "message-label", "ROPIQ"), element("p", "", reply));
   article.append(body);
   conversation.append(article);
   scrollToBottom();
   return { article, body };
-}
-
-function scrollToBottom() {
-  conversation.scrollTop = conversation.scrollHeight;
 }
 
 function addJsonDetails(parent, label, data) {
@@ -69,7 +69,7 @@ function renderWorkflow(result) {
     card.append(list);
   }
   const actions = element("div", "card-actions");
-  const execute = element("button", "primary", "确认并提交到 ComfyUI");
+  const execute = element("button", "primary", "确认并发送到生成后端");
   execute.addEventListener("click", () => confirmPlan(result.planId, execute));
   actions.append(execute);
   card.append(actions);
@@ -93,7 +93,7 @@ function renderApproval(result) {
 function renderResult(result) {
   if (result.sessionId) {
     sessionId = result.sessionId;
-    sessionStorage.setItem("comfy-agent-session", sessionId);
+    sessionStorage.setItem("ropiq-session", sessionId);
   }
   if (result.kind === "workflow") return renderWorkflow(result);
   if (result.kind === "approval") return renderApproval(result);
@@ -108,7 +108,7 @@ function renderResult(result) {
 }
 
 async function confirmPlan(planId, button) {
-  if (!window.confirm("确认执行该操作？这可能会使用云端 GPU、产生费用或改变 ComfyUI 队列。")) return;
+  if (!window.confirm("确认执行该操作？这可能使用本地或云端算力、产生费用或改变生成队列。")) return;
   button.disabled = true;
   try {
     const result = await api("/api/confirm", { method: "POST", body: JSON.stringify({ planId, approved: true }) });
@@ -140,11 +140,11 @@ async function sendMessage(text) {
 }
 
 function renderBootstrap(data) {
-  const comfyDot = document.querySelector("#comfy-dot");
+  const backendDot = document.querySelector("#backend-dot");
   const llmDot = document.querySelector("#llm-dot");
-  comfyDot.className = `dot ${data.connected ? "ok" : "bad"}`;
-  llmDot.className = `dot ${data.llmConfigured ? "ok" : "bad"}`;
-  document.querySelector("#comfy-status").textContent = data.connected ? "ComfyUI 已连接" : "ComfyUI 未连接";
+  backendDot.className = `status-dot ${data.connected ? "ok" : "bad"}`;
+  llmDot.className = `status-dot ${data.llmConfigured ? "ok" : "bad"}`;
+  document.querySelector("#backend-status").textContent = data.connected ? "生成后端已连接" : "生成后端未连接";
   document.querySelector("#llm-status").textContent = data.llmConfigured ? "模型接口已配置" : "模型接口未配置";
   document.querySelector("#model-label").textContent = data.llmConfigured ? `${data.provider} · ${data.model}` : "未配置模型";
 
@@ -152,10 +152,11 @@ function renderBootstrap(data) {
   environment.replaceChildren();
   const metrics = [
     ["状态", data.connected ? "在线" : (data.connectionError || "未配置")],
+    ["适配器", data.backendType === "comfyui" ? "节点图后端" : (data.backendType || "—")],
     ["节点", data.summary?.node_count ?? "—"],
     ["模型", data.summary?.model_count ?? "—"],
     ["模板", data.summary?.template_count ?? "—"],
-    ["GPU", data.summary?.devices?.[0]?.name ?? "—"],
+    ["设备", data.summary?.devices?.[0]?.name ?? "—"],
     ["显存", data.summary?.devices?.[0]?.vram_total_gb ? `${data.summary.devices[0].vram_total_gb} GB` : "—"],
   ];
   for (const [label, value] of metrics) {
@@ -184,15 +185,16 @@ promptInput.addEventListener("keydown", (event) => {
     form.requestSubmit();
   }
 });
+
 promptInput.addEventListener("input", () => {
   promptInput.style.height = "auto";
-  promptInput.style.height = `${Math.min(promptInput.scrollHeight, 160)}px`;
+  promptInput.style.height = `${Math.min(promptInput.scrollHeight, 170)}px`;
 });
 
 document.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => sendMessage(button.dataset.prompt)));
 document.querySelector("#new-chat").addEventListener("click", () => {
   sessionId = "";
-  sessionStorage.removeItem("comfy-agent-session");
+  sessionStorage.removeItem("ropiq-session");
   window.location.reload();
 });
 

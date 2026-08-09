@@ -7,14 +7,13 @@ import { loadConfig } from "./src/config.mjs";
 import { ComfyUiClient, summarizeSnapshot } from "./src/comfyui.mjs";
 import { LlmClient } from "./src/llm.mjs";
 import { buildNodeCatalog, rankCandidates, validateWorkflow } from "./src/workflow.mjs";
-import { startManagedComfyUi } from "./src/comfy-runtime.mjs";
 
 const agentRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = agentRoot;
 const publicRoot = path.join(agentRoot, "public");
 const config = loadConfig(projectRoot);
-const managedRuntime = await startManagedComfyUi(projectRoot, config.comfyui).catch((error) => ({ mode: "error", error: error.message }));
-const comfyui = new ComfyUiClient(config.comfyui);
+if (config.backend.type !== "comfyui") throw new Error(`暂不支持的 BACKEND_TYPE: ${config.backend.type}`);
+const backend = new ComfyUiClient(config.backend);
 const llm = new LlmClient(config.llm);
 const plans = new Map();
 const sessions = new Map();
@@ -56,9 +55,9 @@ function serveStatic(requestPath, response) {
 }
 
 async function getSnapshot(force = false, timeoutMs = 30000) {
-  if (!config.comfyui.baseUrl) throw new Error("未配置 COMFYUI_BASE_URL");
+  if (!config.backend.baseUrl) throw new Error("未配置 BACKEND_BASE_URL");
   if (!force && snapshotCache && Date.now() - snapshotCache.at < 30000) return snapshotCache.value;
-  const value = await comfyui.snapshot(timeoutMs);
+  const value = await backend.snapshot(timeoutMs);
   snapshotCache = { at: Date.now(), value };
   return value;
 }
@@ -133,10 +132,10 @@ async function handleChat(body) {
   const session = getSession(body.sessionId);
   const safeIntent = safeInfoIntent(message);
   if (safeIntent) {
-    if (safeIntent === "queue") return { sessionId: session.id, kind: "info", reply: "这是当前 ComfyUI 队列状态。", data: await comfyui.queue() };
-    if (typeof safeIntent === "object") return { sessionId: session.id, kind: "info", reply: `这是任务 ${safeIntent.history} 的历史状态。`, data: await comfyui.history(safeIntent.history) };
+    if (safeIntent === "queue") return { sessionId: session.id, kind: "info", reply: "这是当前生成后端的队列状态。", data: await backend.queue() };
+    if (typeof safeIntent === "object") return { sessionId: session.id, kind: "info", reply: `这是任务 ${safeIntent.history} 的历史状态。`, data: await backend.history(safeIntent.history) };
     const snapshot = await getSnapshot(true);
-    return { sessionId: session.id, kind: "info", reply: "ComfyUI 已连接，以下信息来自当前实例。", data: summarizeSnapshot(snapshot) };
+    return { sessionId: session.id, kind: "info", reply: "生成后端已连接，以下信息来自当前实例。", data: summarizeSnapshot(snapshot) };
   }
 
   if (!llm.configured) throw new Error("未配置 LLM_BASE_URL 和 LLM_MODEL，无法进行智能工作流规划");
@@ -168,7 +167,7 @@ async function handleChat(body) {
   }
 
   const ranked = rankCandidates(result.candidates, snapshot.objectInfo, snapshot.systemStats);
-  if (ranked.length === 0) throw new Error("DeepSeek 没有返回工作流候选");
+  if (ranked.length === 0) throw new Error("大模型没有返回工作流候选");
   const recommended = ranked[0];
   if (!recommended.validation.valid) {
     const details = ranked.flatMap((item) => item.validation.errors).slice(0, 8).join("；");
@@ -199,20 +198,20 @@ async function confirmPlan(body) {
     const snapshot = await getSnapshot(true);
     const validation = validateWorkflow(plan.workflow, snapshot.objectInfo, snapshot.systemStats);
     if (!validation.valid) throw new Error(`执行前校验失败：${validation.errors.join("；")}`);
-    result = await comfyui.submit(plan.workflow, randomUUID());
+    result = await backend.submit(plan.workflow, randomUUID());
     writeRunRecord(plan, "submitted", { prompt_id: result.prompt_id || "" });
   } else if (plan.actionName === "interrupt") {
-    result = await comfyui.interrupt();
+    result = await backend.interrupt();
     writeRunRecord(plan, "executed");
   } else if (plan.actionName === "clear_queue") {
-    result = await comfyui.clearQueue();
+    result = await backend.clearQueue();
     writeRunRecord(plan, "executed");
   } else if (plan.actionName === "free_memory") {
-    result = await comfyui.freeMemory();
+    result = await backend.freeMemory();
     writeRunRecord(plan, "executed");
   } else if (plan.actionName === "upload_asset") {
     const filePath = approvedAssetPath(plan.action.relative_path);
-    result = await comfyui.uploadImage(path.basename(filePath), fs.readFileSync(filePath));
+    result = await backend.uploadImage(path.basename(filePath), fs.readFileSync(filePath));
     writeRunRecord(plan, "uploaded", { source_assets: [plan.action.relative_path] });
   } else {
     throw new Error("该操作不支持确认执行");
@@ -226,15 +225,15 @@ async function handleApi(request, response, url) {
     let connected = false;
     let summary = null;
     let connectionError = "";
-    if (config.comfyui.baseUrl) {
+    if (config.backend.baseUrl) {
       try { summary = summarizeSnapshot(await getSnapshot(false, 5000)); connected = true; } catch (error) { connectionError = error.message; }
     }
     return sendJson(response, 200, {
       llmConfigured: llm.configured,
-      comfyuiConfigured: Boolean(config.comfyui.baseUrl),
+      backendConfigured: Boolean(config.backend.baseUrl),
+      backendType: config.backend.type,
       connected,
       connectionError,
-      runtime: managedRuntime,
       provider: config.llm.provider,
       model: config.llm.model,
       summary,
@@ -243,13 +242,13 @@ async function handleApi(request, response, url) {
   }
   if (request.method === "POST" && url.pathname === "/api/chat") return sendJson(response, 200, await handleChat(await readJson(request)));
   if (request.method === "POST" && url.pathname === "/api/confirm") return sendJson(response, 200, await confirmPlan(await readJson(request)));
-  if (request.method === "GET" && url.pathname === "/api/queue") return sendJson(response, 200, await comfyui.queue());
-  if (request.method === "GET" && url.pathname.startsWith("/api/history/")) return sendJson(response, 200, await comfyui.history(decodeURIComponent(url.pathname.slice(13))));
+  if (request.method === "GET" && url.pathname === "/api/queue") return sendJson(response, 200, await backend.queue());
+  if (request.method === "GET" && url.pathname.startsWith("/api/history/")) return sendJson(response, 200, await backend.history(decodeURIComponent(url.pathname.slice(13))));
   if (request.method === "GET" && url.pathname === "/api/output") {
     const filename = url.searchParams.get("filename") || "";
     if (!filename || filename.includes("..")) throw new Error("下载文件名无效");
     const query = new URLSearchParams({ filename, subfolder: url.searchParams.get("subfolder") || "", type: url.searchParams.get("type") || "output" });
-    const upstream = await comfyui.request(`view?${query}`);
+    const upstream = await backend.request(`view?${query}`);
     response.writeHead(200, {
       "Content-Type": upstream.headers.get("content-type") || "application/octet-stream",
       "Content-Disposition": `attachment; filename="${path.basename(filename).replaceAll('"', "")}"`,
@@ -275,6 +274,6 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(config.port, "127.0.0.1", () => {
-  console.log(`Comfy Agent: http://127.0.0.1:${config.port}`);
-  console.log(`LLM: ${llm.configured ? `${config.llm.provider}:${config.llm.model}` : "未配置"}; ComfyUI: ${config.comfyui.baseUrl ? "已配置" : "未配置"}`);
+  console.log(`Ropiq: http://127.0.0.1:${config.port}`);
+  console.log(`LLM: ${llm.configured ? `${config.llm.provider}:${config.llm.model}` : "未配置"}; Backend: ${config.backend.baseUrl ? config.backend.type : "未配置"}`);
 });

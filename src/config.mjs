@@ -21,17 +21,15 @@ export function loadConfig(projectRoot, overrides = {}) {
   const envPath = path.join(projectRoot, ".env.local");
   const fileEnv = fs.existsSync(envPath) ? parseEnv(fs.readFileSync(envPath, "utf8")) : {};
   const env = { ...fileEnv, ...process.env, ...overrides };
-  const port = Number.parseInt(env.COMFY_AGENT_PORT || "8787", 10);
+  const port = Number.parseInt(env.ROPIQ_PORT || env.COMFY_AGENT_PORT || "8787", 10);
 
   return {
     projectRoot,
     port: Number.isInteger(port) && port > 0 ? port : 8787,
-    comfyui: {
-      baseUrl: (env.COMFYUI_BASE_URL || "").replace(/\/$/, ""),
-      token: env.COMFYUI_API_TOKEN || "",
-      home: env.COMFYUI_HOME || "",
-      python: env.COMFYUI_PYTHON || "",
-      port: Number.parseInt(env.COMFYUI_PORT || "8188", 10),
+    backend: {
+      type: env.BACKEND_TYPE || "comfyui",
+      baseUrl: (env.BACKEND_BASE_URL || env.COMFYUI_BASE_URL || "").replace(/\/$/, ""),
+      token: env.BACKEND_API_TOKEN || env.COMFYUI_API_TOKEN || "",
     },
     llm: {
       provider: env.LLM_PROVIDER || "openai-compatible",

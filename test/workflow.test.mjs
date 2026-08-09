@@ -27,7 +27,7 @@ const validWorkflow = {
   "3": { class_type: "SaveImage", inputs: { images: ["2", 0], filename_prefix: "agent/dish" } },
 };
 
-test("validates a graph against installed ComfyUI nodes", () => {
+test("validates a graph against installed backend nodes", () => {
   const result = validateWorkflow(validWorkflow, objectInfo, { devices: [{ vram_total: 24 * 1024 ** 3 }] });
   assert.equal(result.valid, true);
   assert.equal(result.score, 100);

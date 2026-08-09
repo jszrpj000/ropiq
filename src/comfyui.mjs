@@ -5,7 +5,7 @@ export class ComfyUiClient {
   }
 
   async request(route, options = {}) {
-    if (!this.config.baseUrl) throw new Error("未配置 COMFYUI_BASE_URL");
+    if (!this.config.baseUrl) throw new Error("未配置 BACKEND_BASE_URL");
     const { timeoutMs = 30000, ...requestOptions } = options;
     const headers = { ...(requestOptions.headers || {}) };
     if (this.config.token) headers.Authorization = `Bearer ${this.config.token}`;
@@ -14,7 +14,7 @@ export class ComfyUiClient {
       headers,
       signal: requestOptions.signal || AbortSignal.timeout(timeoutMs),
     });
-    if (!response.ok) throw new Error(`ComfyUI ${route} 请求失败 (${response.status})`);
+    if (!response.ok) throw new Error(`生成后端 ${route} 请求失败 (${response.status})`);
     return response;
   }
 

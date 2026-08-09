@@ -5,7 +5,7 @@ export function parseJsonContent(content) {
 }
 
 function systemPrompt(catalog, summary) {
-  return `你是 ComfyUI 工作流智能体。用户只描述目标，你负责基于当前实例真实能力设计最佳方案。
+  return `你是 Ropiq 的生成工作流规划智能体。用户只描述目标，你负责基于当前连接后端的真实能力设计最佳方案。
 
 必须输出单个 JSON 对象，不得输出 Markdown。格式：
 {
