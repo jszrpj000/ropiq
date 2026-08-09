@@ -8,8 +8,8 @@ import { ComfyUiClient, summarizeSnapshot } from "./src/comfyui.mjs";
 import { ExtensionRegistry } from "./src/extensions.mjs";
 import { LlmClient } from "./src/llm.mjs";
 import { skillSpectorStatus } from "./src/security.mjs";
-import { StudioStore, STUDIO_PIPELINES, splitLongText } from "./src/studio.mjs";
-import { buildNodeCatalog, buildTrustedImageCandidate, rankCandidates, validateSelfHostedWorkflow, validateWorkflow } from "./src/workflow.mjs";
+import { compileStagePrompts, StudioStore, STUDIO_PIPELINES, splitLongText, validateStagePromptArtifact } from "./src/studio.mjs";
+import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedVideoCandidate, rankCandidates, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "./src/workflow.mjs";
 
 const agentRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = agentRoot;
@@ -138,11 +138,54 @@ function writeRunRecord(plan, status, extra = {}) {
   fs.writeFileSync(path.join(directory, `${plan.id}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
 }
 
-function validateStudioWorkflow(workflow, objectInfo, systemStats) {
-  const structural = validateWorkflow(workflow, objectInfo, systemStats);
+function validationWorkflow(workflow, objectInfo, allowDeferredSource = false) {
+  if (!allowDeferredSource) return workflow;
+  const copy = structuredClone(workflow);
+  const imageChoices = objectInfo?.LoadImage?.input?.required?.image?.[0];
+  const fallbackImage = Array.isArray(imageChoices) ? imageChoices[0] : "";
+  for (const node of Object.values(copy || {})) {
+    if (node?.class_type === "LoadImage" && node.inputs?.image === STUDIO_SOURCE_IMAGE_PLACEHOLDER) node.inputs.image = fallbackImage;
+  }
+  return copy;
+}
+
+function validateStudioWorkflow(workflow, objectInfo, systemStats, allowDeferredSource = false) {
+  const structural = validateWorkflow(validationWorkflow(workflow, objectInfo, allowDeferredSource), objectInfo, systemStats);
   const policy = validateSelfHostedWorkflow(workflow);
   const errors = [...structural.errors, ...policy.errors];
   return { ...structural, valid: errors.length === 0, score: Math.max(0, structural.score - policy.errors.length * 25), errors };
+}
+
+function studioSourceOutput(project, stageId) {
+  const sourceStageId = stageId === "video_generation" ? "image_generation" : stageId === "product_video" ? "product_images" : "";
+  const runs = project.artifacts?.[sourceStageId]?.execution?.runs || [];
+  for (const run of [...runs].reverse()) {
+    if (run.status !== "success") continue;
+    const output = (run.outputs || []).find((item) => item.kind === "images" && /\.(?:png|jpe?g|webp)$/i.test(String(item.filename || "")));
+    if (output) return { filename: output.filename, subfolder: output.subfolder || "", type: output.type || "output" };
+  }
+  throw new Error("视频生成需要首帧：请先在图像生成阶段执行并得到一张成功的关键帧");
+}
+
+async function uploadStudioSourceImage(plan) {
+  const source = plan.studio?.sourceOutput;
+  const nodeId = plan.studio?.sourceImageNodeId;
+  if (!source || !nodeId) return plan.workflow;
+  if ([source.filename, source.subfolder].some((value) => String(value || "").includes("..")) || !["output", "temp"].includes(source.type)) {
+    throw new Error("首帧输出路径无效");
+  }
+  const params = new URLSearchParams({ filename: source.filename, subfolder: source.subfolder, type: source.type });
+  const response = await backend.request(`view?${params}`, { timeoutMs: 60000 });
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > 50 * 1024 * 1024) throw new Error("首帧文件为空或超过 50 MB");
+  const extension = path.extname(source.filename).toLowerCase();
+  const upload = await backend.uploadImage(`ropiq-${plan.studio.projectId.slice(0, 8)}-${Date.now()}${extension}`, bytes);
+  if (!upload?.name) throw new Error("首帧上传后未返回文件名");
+  const uploadedName = upload.subfolder ? `${upload.subfolder}/${upload.name}` : upload.name;
+  const workflow = structuredClone(plan.workflow);
+  if (workflow?.[nodeId]?.inputs?.image !== STUDIO_SOURCE_IMAGE_PLACEHOLDER) throw new Error("首帧占位节点已被修改，请重新生成执行计划");
+  workflow[nodeId].inputs.image = uploadedName;
+  return workflow;
 }
 
 function safeInfoIntent(message) {
@@ -279,12 +322,21 @@ async function confirmPlan(body) {
   let result;
   let studioProject = null;
   if (plan.workflow) {
-    const snapshot = await getSnapshot(true);
-    const validation = plan.studio
-      ? validateStudioWorkflow(plan.workflow, snapshot.objectInfo, snapshot.systemStats)
-      : validateWorkflow(plan.workflow, snapshot.objectInfo, snapshot.systemStats);
+    let snapshot = await getSnapshot(true);
+    let workflow = plan.workflow;
+    let validation = plan.studio
+      ? validateStudioWorkflow(workflow, snapshot.objectInfo, snapshot.systemStats, Boolean(plan.studio.sourceOutput))
+      : validateWorkflow(workflow, snapshot.objectInfo, snapshot.systemStats);
     if (!validation.valid) throw new Error(`执行前校验失败：${validation.errors.join("；")}`);
-    result = await backend.submit(plan.workflow, randomUUID());
+    if (plan.studio?.sourceOutput) {
+      workflow = await uploadStudioSourceImage(plan);
+      snapshot = await getSnapshot(true);
+      validation = validateStudioWorkflow(workflow, snapshot.objectInfo, snapshot.systemStats);
+      if (!validation.valid) throw new Error(`首帧上传后的执行校验失败：${validation.errors.join("；")}`);
+      plan.workflow = workflow;
+      plan.validation = validation;
+    }
+    result = await backend.submit(workflow, randomUUID());
     writeRunRecord(plan, "submitted", { prompt_id: result.prompt_id || "" });
     if (plan.studio && result.prompt_id) {
       studioProject = studio.recordExecutionRun(plan.studio.projectId, plan.studio.stageId, {
@@ -405,6 +457,9 @@ async function runStudioStage(projectId, stageId) {
       mode: stage.executor === "llm" ? "artifact" : "specification_only",
       requiresApproval: stage.executor !== "llm",
     };
+    compileStagePrompts(stage.id, artifact);
+    const promptValidation = validateStagePromptArtifact(stage.id, artifact);
+    if (!promptValidation.valid) throw new Error(`阶段提示词结构不完整：${promptValidation.errors.slice(0, 8).join("；")}`);
     return studio.saveArtifact(projectId, stageId, artifact, stage.executor === "llm" ? "complete" : "specified");
   } catch (error) {
     studio.markError(projectId, stageId, error.message);
@@ -439,9 +494,17 @@ async function prepareStudioExecution(projectId, stageId) {
   const summary = summarizeSnapshot(snapshot);
   summary.approved_assets = listApprovedAssets();
   const selectedSkills = extensions.selectSkills(`${project.title} ${stage.name} ${artifactText}`);
+  let sourceOutput = null;
+  const outputPrefix = `RopiqStudio/${project.id.slice(0, 8)}-${stage.id}`;
   const trusted = /image/i.test(stageId)
-    ? buildTrustedImageCandidate(snapshot.objectInfo, artifact, `RopiqStudio/${project.id.slice(0, 8)}-${stage.id}`)
-    : null;
+    ? buildTrustedImageCandidate(snapshot.objectInfo, artifact, outputPrefix)
+    : /video/i.test(stageId)
+      ? buildTrustedVideoCandidate(snapshot.objectInfo, artifact, outputPrefix)
+      : null;
+  if (/video/i.test(stageId)) {
+    if (!trusted) throw new Error("当前 ComfyUI 缺少受信任的本地 Wan 图生视频节点或模型，请安装官方 Wan 2.1 I2V 依赖后重试");
+    sourceOutput = studioSourceOutput(project, stageId);
+  }
   const result = trusted
     ? { intent: "workflow", reply: "已根据当前 ComfyUI 中的本地模型和节点生成受信任工作流。", candidates: [trusted] }
     : await llm.plan({
@@ -455,7 +518,7 @@ async function prepareStudioExecution(projectId, stageId) {
   if (result.intent !== "workflow") throw new Error("大模型没有返回可校验的节点工作流");
   const ranked = (Array.isArray(result.candidates) ? result.candidates : []).map((candidate, index) => ({
     ...candidate,
-    validation: validateStudioWorkflow(candidate.workflow, snapshot.objectInfo, snapshot.systemStats),
+    validation: validateStudioWorkflow(candidate.workflow, snapshot.objectInfo, snapshot.systemStats, Boolean(candidate.sourceImageNodeId)),
     originalIndex: index,
   })).sort((a, b) => b.validation.score - a.validation.score || a.originalIndex - b.originalIndex);
   if (!ranked.length) throw new Error("大模型没有返回工作流候选");
@@ -470,7 +533,7 @@ async function prepareStudioExecution(projectId, stageId) {
     validation: recommended.validation,
     title: recommended.title || `${project.title} · ${stage.name}`,
     skills: selectedSkills.map((skill) => skill.id),
-    studio: { projectId, stageId },
+    studio: { projectId, stageId, sourceOutput, sourceImageNodeId: recommended.sourceImageNodeId || "" },
   };
   plans.set(id, plan);
   writeRunRecord(plan, "planned", { studio_project_id: projectId, studio_stage_id: stageId });
@@ -576,6 +639,9 @@ async function handleApi(request, response, url) {
     if (action === "run") return sendJson(response, 200, { project: await runStudioStage(projectId, stageId) });
     if (action === "prepare-execution") return sendJson(response, 200, await prepareStudioExecution(projectId, stageId));
     const body = await readJson(request, 2 * 1024 * 1024);
+    compileStagePrompts(stageId, body.artifact);
+    const validation = validateStagePromptArtifact(stageId, body.artifact);
+    if (!validation.valid) throw new Error(`阶段提示词结构不完整：${validation.errors.slice(0, 8).join("；")}`);
     return sendJson(response, 200, { project: studio.saveArtifact(projectId, stageId, body.artifact, body.status === "specified" ? "specified" : "complete") });
   }
   const studioRunMatch = url.pathname.match(/^\/api\/studio\/projects\/([a-f0-9-]{36})\/stages\/([a-z0-9_-]+)\/runs\/([a-f0-9-]{36})\/sync$/);

@@ -39,6 +39,13 @@ const productStages = [
   ["product_delivery", "成片", "plugin:editor", "生成平台成片、封面、标题建议、AI标识、校验值和素材归档任务。"],
 ];
 
+const stageContextDependencies = {
+  video_generation: ["episodic_scripts", "character_design", "scene_design", "storyboard", "cinematography", "look_development", "prompt_engineering", "image_generation"],
+  voice_synthesis: ["episodic_scripts", "character_design", "storyboard", "video_generation"],
+  product_video: ["ad_script", "product_storyboard", "product_cinematography", "product_lookdev", "product_prompts", "product_images"],
+  product_voice: ["ad_script", "product_storyboard", "product_video"],
+};
+
 function makeStages(definitions) {
   return definitions.map(([id, name, executor, instruction], index) => ({
     id, name, executor, instruction, order: index + 1, status: "pending", revision: 0, updatedAt: null, summary: "",
@@ -65,6 +72,117 @@ export function splitLongText(text, maxChars = 14000, maxChunks = 32) {
   }
   if (current && chunks.length < maxChunks) chunks.push(current);
   return chunks;
+}
+
+function nonEmpty(value) { return typeof value === "string" && value.trim().length > 0; }
+
+function promptPart(value) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) return value.map(promptPart).filter(Boolean).join("，");
+  if (value && typeof value === "object") return Object.entries(value).map(([key, item]) => `${key}:${promptPart(item)}`).join("，");
+  return value === undefined || value === null ? "" : String(value);
+}
+
+function promptList(value) {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null || value === "") return [];
+  return [value];
+}
+
+function compileVideoPrompt(prompt = {}) {
+  return [
+    promptPart(prompt.positive),
+    promptPart(prompt.motion) && `动作与环境运动：${promptPart(prompt.motion)}`,
+    promptPart(prompt.camera) && `镜头：${promptPart(prompt.camera)}`,
+    promptPart(prompt.lighting_material) && `灯光材质：${promptPart(prompt.lighting_material)}`,
+    promptPart(prompt.continuity) && `连续性必须保持：${promptPart(prompt.continuity)}`,
+  ].filter(Boolean).join("；");
+}
+
+function compileVoicePrompt(prompt = {}) {
+  return [
+    promptPart(prompt.voice_profile) && `声线：${promptPart(prompt.voice_profile)}`,
+    promptPart(prompt.emotion) && `情绪：${promptPart(prompt.emotion)}`,
+    promptPart(prompt.intensity) && `强度：${promptPart(prompt.intensity)}`,
+    promptPart(prompt.pace) && `语速：${promptPart(prompt.pace)}`,
+    promptPart(prompt.pauses) && `停连：${promptPart(prompt.pauses)}`,
+    promptPart(prompt.pronunciation) && `发音：${promptPart(prompt.pronunciation)}`,
+    promptPart(prompt.restrictions) && `限制：${promptPart(prompt.restrictions)}`,
+  ].filter(Boolean).join("；");
+}
+
+export function compileStagePrompts(stageId, artifact) {
+  if (!artifact || typeof artifact !== "object") return artifact;
+  if (["prompt_engineering", "product_prompts"].includes(stageId)) {
+    for (const shot of artifact?.data?.shots || []) {
+      if (shot?.image_prompt) shot.image_prompt.compiled = promptPart(shot.image_prompt.positive);
+      if (shot?.video_prompt) {
+        shot.video_prompt.continuity = promptList(shot.video_prompt.continuity ?? shot.video_prompt.continuity_constraints ?? shot.continuity);
+        shot.video_prompt.compiled = compileVideoPrompt(shot.video_prompt);
+      }
+    }
+  }
+  if (["video_generation", "product_video"].includes(stageId)) {
+    for (const job of artifact?.execution?.jobs || []) if (job?.video_prompt) {
+      job.video_prompt.continuity = promptList(job.video_prompt.continuity ?? job.video_prompt.continuity_constraints ?? job.continuity);
+      job.video_prompt.compiled = compileVideoPrompt(job.video_prompt);
+    }
+  }
+  if (["voice_synthesis", "product_voice"].includes(stageId)) {
+    for (const job of artifact?.execution?.jobs || []) if (job?.voice_prompt) {
+      const providedDuration = Number(job.target_duration_seconds || job.duration_seconds || job.target_duration || job.duration);
+      const textLength = Array.from(String(job.text || "").replace(/\s+/g, "")).length;
+      job.target_duration_seconds = providedDuration > 0 ? providedDuration : Math.max(1, Math.min(30, Math.round((textLength / 4) * 10) / 10));
+      job.voice_prompt.intensity = promptPart(job.voice_prompt.intensity || job.voice_prompt.intensity_level || job.intensity) || "中等";
+      job.voice_prompt.pace = promptPart(job.voice_prompt.pace || job.voice_prompt.speaking_rate || job.pace) || "自然";
+      for (const field of ["pauses", "pronunciation", "restrictions"]) job.voice_prompt[field] = promptList(job.voice_prompt[field]);
+      job.voice_prompt.compiled_instruction = compileVoicePrompt(job.voice_prompt);
+    }
+  }
+  return artifact;
+}
+
+export function validateStagePromptArtifact(stageId, artifact) {
+  const errors = [];
+  if (["prompt_engineering", "product_prompts"].includes(stageId)) {
+    const shots = artifact?.data?.shots;
+    if (!Array.isArray(shots) || shots.length === 0) errors.push("提示词阶段缺少 data.shots");
+    for (const [index, shot] of (shots || []).entries()) {
+      if (!nonEmpty(shot?.shot_id)) errors.push(`提示词镜头 ${index + 1} 缺少 shot_id`);
+      if (!nonEmpty(shot?.image_prompt?.compiled)) errors.push(`提示词镜头 ${index + 1} 缺少 image_prompt.compiled`);
+      if (!nonEmpty(shot?.video_prompt?.compiled)) errors.push(`提示词镜头 ${index + 1} 缺少 video_prompt.compiled`);
+    }
+  }
+  if (["video_generation", "product_video"].includes(stageId)) {
+    const jobs = artifact?.execution?.jobs;
+    if (!Array.isArray(jobs) || jobs.length === 0) errors.push("视频阶段缺少 execution.jobs");
+    for (const [index, job] of (jobs || []).entries()) {
+      const label = `视频任务 ${index + 1}`;
+      for (const field of ["id", "shot_id", "source_image_ref"]) if (!nonEmpty(job?.[field])) errors.push(`${label} 缺少 ${field}`);
+      if (!(Number(job?.duration_seconds) > 0)) errors.push(`${label} 缺少有效 duration_seconds`);
+      if (!(Number(job?.fps) > 0)) errors.push(`${label} 缺少有效 fps`);
+      for (const field of ["positive", "motion", "camera", "lighting_material", "negative", "compiled"]) {
+        if (!nonEmpty(job?.video_prompt?.[field])) errors.push(`${label} 缺少 video_prompt.${field}`);
+      }
+      if (!Array.isArray(job?.video_prompt?.continuity)) errors.push(`${label} 缺少 video_prompt.continuity`);
+    }
+  }
+  if (["voice_synthesis", "product_voice"].includes(stageId)) {
+    const jobs = artifact?.execution?.jobs;
+    if (!Array.isArray(jobs) || jobs.length === 0) errors.push("配音阶段缺少 execution.jobs");
+    for (const [index, job] of (jobs || []).entries()) {
+      const label = `配音任务 ${index + 1}`;
+      for (const field of ["id", "line_id", "shot_id", "character_id", "text"]) if (!nonEmpty(job?.[field])) errors.push(`${label} 缺少 ${field}`);
+      if (!(Number(job?.target_duration_seconds) > 0)) errors.push(`${label} 缺少有效 target_duration_seconds`);
+      for (const field of ["voice_profile", "emotion", "intensity", "pace", "compiled_instruction"]) {
+        if (!nonEmpty(job?.voice_prompt?.[field])) errors.push(`${label} 缺少 voice_prompt.${field}`);
+      }
+      for (const field of ["pauses", "pronunciation", "restrictions"]) {
+        if (!Array.isArray(job?.voice_prompt?.[field])) errors.push(`${label} 缺少 voice_prompt.${field}`);
+      }
+    }
+  }
+  return { valid: errors.length === 0, errors };
 }
 
 function safeProjectId(id) {
@@ -215,8 +333,11 @@ export class StudioStore {
     if (index < 0) throw new Error("制作阶段不存在");
     const context = [];
     let used = 0;
-    for (let cursor = Math.max(0, index - 6); cursor < index; cursor += 1) {
-      const stage = project.stages[cursor];
+    const recentIds = project.stages.slice(Math.max(0, index - 6), index).map((stage) => stage.id);
+    const stageIds = [...new Set([...(stageContextDependencies[stageId] || []), ...recentIds])];
+    for (const dependencyId of stageIds) {
+      const stage = project.stages.find((item) => item.id === dependencyId);
+      if (!stage || stage.order >= project.stages[index].order) continue;
       const artifact = project.artifacts[stage.id];
       if (!artifact) continue;
       const text = JSON.stringify({ stage: stage.name, artifact });

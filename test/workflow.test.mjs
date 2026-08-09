@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildNodeCatalog, buildTrustedImageCandidate, rankCandidates, validateSelfHostedWorkflow, validateWorkflow } from "../src/workflow.mjs";
+import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedVideoCandidate, rankCandidates, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "../src/workflow.mjs";
 
 const objectInfo = {
   LoadImage: {
@@ -133,5 +133,31 @@ test("builds a trusted Z-Image workflow from installed local model choices", () 
   assert.equal(candidate.workflow["4"].inputs.text, "orange boat");
   assert.equal(candidate.workflow["6"].inputs.width, 768);
   assert.equal(candidate.workflow["10"].inputs.filename_prefix, "RopiqStudio/test");
+  assert.equal(validateSelfHostedWorkflow(candidate.workflow).valid, true);
+});
+
+test("builds a trusted Wan image-to-video workflow with a deferred source image", () => {
+  const choice = (values) => [values, {}];
+  const empty = { input: { required: {} } };
+  const info = {
+    UNETLoader: { input: { required: { unet_name: choice(["Wan2.1/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"]), weight_dtype: choice(["default"]) } } },
+    ModelSamplingSD3: empty,
+    CLIPLoader: { input: { required: { clip_name: choice(["umt5_xxl_fp8_e4m3fn_scaled.safetensors"]), type: choice(["wan"]) }, optional: { device: choice(["default"]) } } },
+    CLIPTextEncode: empty,
+    VAELoader: { input: { required: { vae_name: choice(["wan_2.1_vae.safetensors"]) } } },
+    CLIPVisionLoader: { input: { required: { clip_name: choice(["clip_vision_h.safetensors"]) } } },
+    CLIPVisionEncode: { input: { required: { crop: choice(["none"]) } } },
+    LoadImage: empty,
+    WanImageToVideo: empty,
+    KSampler: { input: { required: { sampler_name: choice(["uni_pc"]), scheduler: choice(["simple"]) } } },
+    VAEDecode: empty,
+    SaveWEBM: empty,
+  };
+  const artifact = { execution: { jobs: [{ duration_seconds: 4, fps: 16, video_prompt: { compiled: "boat drifts, slow push-in", negative: "flicker" } }] } };
+  const candidate = buildTrustedVideoCandidate(info, artifact, "RopiqStudio/test-video");
+  assert.equal(candidate.workflow["4"].inputs.text, "boat drifts, slow push-in");
+  assert.equal(candidate.workflow["7"].inputs.image, STUDIO_SOURCE_IMAGE_PLACEHOLDER);
+  assert.equal(candidate.workflow["10"].inputs.length, 65);
+  assert.equal(candidate.workflow["13"].inputs.filename_prefix, "RopiqStudio/test-video");
   assert.equal(validateSelfHostedWorkflow(candidate.workflow).valid, true);
 });

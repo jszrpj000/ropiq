@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LlmClient, parseJsonContent } from "../src/llm.mjs";
+import { LlmClient, parseJsonContent, studioPromptContract } from "../src/llm.mjs";
 
 test("parses plain and fenced JSON", () => {
   assert.deepEqual(parseJsonContent('{"intent":"help"}'), { intent: "help" });
@@ -79,4 +79,15 @@ test("produces media execution specifications without claiming execution", async
   assert.equal(result.execution.ready, false);
   assert.match(requestBody.messages[0].content, /不得声称已经生成媒体/);
   assert.match(requestBody.messages[0].content, /后端未连接/);
+});
+
+test("requires structured video and voice prompt contracts", () => {
+  const video = studioPromptContract({ id: "video_generation" });
+  assert.match(video, /video_prompt/);
+  assert.match(video, /source_image_ref/);
+  assert.match(video, /compiled/);
+  const voice = studioPromptContract({ id: "voice_synthesis" });
+  assert.match(voice, /voice_prompt/);
+  assert.match(voice, /compiled_instruction/);
+  assert.match(voice, /真人声音/);
 });
