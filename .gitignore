@@ -1,0 +1,11 @@
+.env
+.env.local
+node_modules/
+runtime/
+runs/*
+!runs/.gitkeep
+assets/approved/*
+!assets/approved/.gitkeep
+*.log
+.DS_Store
+Thumbs.db
