@@ -41,6 +41,19 @@ function normalizeMessages(history, userMessage) {
   ];
 }
 
+export function studioPromptContract(stage) {
+  if (["prompt_engineering", "product_prompts"].includes(stage.id)) {
+    return `提示词阶段强制结构：data.shots 必须是非空数组。每个镜头必须包含 shot_id、image_prompt 和 video_prompt。image_prompt 包含 positive、negative、compiled；video_prompt 包含 positive、motion、camera、lighting_material、continuity、negative、compiled。compiled 是可直接交给对应生成模型的最终提示词。`;
+  }
+  if (["video_generation", "product_video"].includes(stage.id)) {
+    return `视频任务强制结构：execution.jobs 必须是非空数组。每个任务必须包含 id、shot_id、source_image_ref、duration_seconds、fps 和 video_prompt。video_prompt 必须包含 positive、motion、camera、lighting_material、continuity、negative、compiled；compiled 要合并主体动作、环境运动、运镜、灯光材质和连续性约束，不能只写风格词。`;
+  }
+  if (["voice_synthesis", "product_voice"].includes(stage.id)) {
+    return `配音任务强制结构：execution.jobs 必须是非空数组。每个任务必须包含 id、line_id、shot_id、character_id、text、target_duration_seconds 和 voice_prompt。voice_prompt 必须包含 voice_profile、emotion、intensity、pace、pauses、pronunciation、restrictions、compiled_instruction；不得使用真人姓名或要求模仿未授权真人声音。`;
+  }
+  return "";
+}
+
 export class LlmClient {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
@@ -147,6 +160,7 @@ export class LlmClient {
 
 阶段目标：${stage.instruction}
 ${executionRule}
+${studioPromptContract(stage)}
 
 必须输出：
 {

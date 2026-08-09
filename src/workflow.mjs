@@ -215,6 +215,8 @@ function boundedNumber(value, fallback, min, max) {
   return Math.max(min, Math.min(max, Number.isFinite(number) ? number : fallback));
 }
 
+export const STUDIO_SOURCE_IMAGE_PLACEHOLDER = "__ROPIQ_SOURCE_IMAGE_AFTER_CONFIRMATION__";
+
 export function buildTrustedImageCandidate(objectInfo, artifact, outputPrefix) {
   const requiredNodes = ["UNETLoader", "ModelSamplingAuraFlow", "CLIPLoader", "CLIPTextEncode", "EmptySD3LatentImage", "KSampler", "VAELoader", "VAEDecode", "SaveImage"];
   if (!requiredNodes.every((classType) => objectInfo?.[classType])) return null;
@@ -245,6 +247,56 @@ export function buildTrustedImageCandidate(objectInfo, artifact, outputPrefix) {
     "10": { class_type: "SaveImage", inputs: { images: ["9", 0], filename_prefix: outputPrefix } },
   };
   return { title: "Z-Image Turbo 本地低成本预览", rationale: "使用当前 ComfyUI 已安装的本地模型、编码器、VAE 和采样器，不调用外部生成 API。", workflow };
+}
+
+export function buildTrustedVideoCandidate(objectInfo, artifact, outputPrefix) {
+  const requiredNodes = ["UNETLoader", "ModelSamplingSD3", "CLIPLoader", "CLIPTextEncode", "VAELoader", "CLIPVisionLoader", "CLIPVisionEncode", "LoadImage", "WanImageToVideo", "KSampler", "VAEDecode", "SaveWEBM"];
+  if (!requiredNodes.every((classType) => objectInfo?.[classType])) return null;
+
+  const unet = pickChoice(enumChoices(objectInfo, "UNETLoader", "unet_name"), [
+    /wan2\.1_i2v_480p_14b_fp8_scaled\.safetensors$/i,
+    /wan2\.1_i2v_480p_14b_fp8.*\.safetensors$/i,
+    /wan2\.1_i2v_480p_14b_(?:bf16|fp16)\.safetensors$/i,
+  ]);
+  const clip = pickChoice(enumChoices(objectInfo, "CLIPLoader", "clip_name"), [/umt5_xxl_fp8_e4m3fn_scaled\.safetensors$/i, /umt5.*\.safetensors$/i]);
+  const clipType = pickChoice(enumChoices(objectInfo, "CLIPLoader", "type"), [/^wan$/i]);
+  const vae = pickChoice(enumChoices(objectInfo, "VAELoader", "vae_name"), [/wan_2\.1_vae\.safetensors$/i, /wan2_1_vae.*\.safetensors$/i]);
+  const clipVision = pickChoice(enumChoices(objectInfo, "CLIPVisionLoader", "clip_name"), [/clip_vision_h\.safetensors$/i, /clip.*vision.*\.safetensors$/i]);
+  const sampler = pickChoice(enumChoices(objectInfo, "KSampler", "sampler_name"), [/^uni_pc$/i, /^euler$/i]);
+  const scheduler = pickChoice(enumChoices(objectInfo, "KSampler", "scheduler"), [/^simple$/i]);
+  if (![unet, clip, clipType, vae, clipVision, sampler, scheduler].every(Boolean)) return null;
+
+  const job = artifact?.execution?.jobs?.[0] || artifact || {};
+  const videoPrompt = job.video_prompt || {};
+  const positive = String(videoPrompt.compiled || videoPrompt.positive || job.positivePrompt || artifact?.summary || "cinematic natural motion").slice(0, 10000);
+  const negative = String(videoPrompt.negative || job.negativePrompt || "static frame, flicker, jitter, deformation, text, logo, watermark, low quality").slice(0, 10000);
+  const fps = Math.round(boundedNumber(job.fps, 16, 8, 30));
+  const requestedFrames = Math.round(boundedNumber(job.duration_seconds, 4, 1, 8) * fps);
+  const length = Math.min(81, Math.max(17, Math.floor(requestedFrames / 4) * 4 + 1));
+  const width = Math.round(boundedNumber(job.width, 512, 256, 1280) / 16) * 16;
+  const height = Math.round(boundedNumber(job.height, 512, 256, 1280) / 16) * 16;
+  const crop = pickChoice(enumChoices(objectInfo, "CLIPVisionEncode", "crop"), [/^none$/i, /^center$/i]) || "none";
+  const workflow = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: unet, weight_dtype: pickChoice(enumChoices(objectInfo, "UNETLoader", "weight_dtype"), [/^default$/i]) || "default" } },
+    "2": { class_type: "ModelSamplingSD3", inputs: { model: ["1", 0], shift: 8 } },
+    "3": { class_type: "CLIPLoader", inputs: { clip_name: clip, type: clipType, device: pickChoice(enumChoices(objectInfo, "CLIPLoader", "device"), [/^default$/i]) || "default" } },
+    "4": { class_type: "CLIPTextEncode", inputs: { text: positive, clip: ["3", 0] } },
+    "5": { class_type: "CLIPTextEncode", inputs: { text: negative, clip: ["3", 0] } },
+    "6": { class_type: "VAELoader", inputs: { vae_name: vae } },
+    "7": { class_type: "LoadImage", inputs: { image: STUDIO_SOURCE_IMAGE_PLACEHOLDER } },
+    "8": { class_type: "CLIPVisionLoader", inputs: { clip_name: clipVision } },
+    "9": { class_type: "CLIPVisionEncode", inputs: { clip_vision: ["8", 0], image: ["7", 0], crop } },
+    "10": { class_type: "WanImageToVideo", inputs: { positive: ["4", 0], negative: ["5", 0], vae: ["6", 0], width, height, length, batch_size: 1, clip_vision_output: ["9", 0], start_image: ["7", 0] } },
+    "11": { class_type: "KSampler", inputs: { model: ["2", 0], positive: ["10", 0], negative: ["10", 1], latent_image: ["10", 2], seed: Math.round(boundedNumber(job.seed, 42, 0, Number.MAX_SAFE_INTEGER)), control_after_generate: "fixed", steps: Math.round(boundedNumber(job.steps, 20, 1, 40)), cfg: boundedNumber(job.cfg, 6, 0, 30), sampler_name: sampler, scheduler, denoise: 1 } },
+    "12": { class_type: "VAEDecode", inputs: { samples: ["11", 0], vae: ["6", 0] } },
+    "13": { class_type: "SaveWEBM", inputs: { images: ["12", 0], filename_prefix: outputPrefix, codec: "vp9", fps, crf: 28 } },
+  };
+  return {
+    title: "Wan 2.1 本地图生视频预览",
+    rationale: "使用当前 ComfyUI 已安装的 Wan 本地模型；确认执行后才会把上一阶段关键帧上传为首帧，不调用外部生成 API。",
+    workflow,
+    sourceImageNodeId: "7",
+  };
 }
 
 export function rankCandidates(candidates, objectInfo, systemStats) {
