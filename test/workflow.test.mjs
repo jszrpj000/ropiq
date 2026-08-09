@@ -72,3 +72,25 @@ test("catalog prioritizes relevant and output nodes", () => {
   assert.equal(catalog[0].class_type, "ImageScale");
   assert.ok(catalog.some((node) => node.output_node));
 });
+
+test("catalog compacts huge model enums and keeps query matches", () => {
+  const models = Array.from({ length: 9000 }, (_, index) => `model_${String(index).padStart(4, "0")}.safetensors`);
+  models[7342] = "z_image_turbo_bf16.safetensors";
+  const catalog = buildNodeCatalog({
+    UNETLoader: { input: { required: { unet_name: [models, {}], weight_dtype: [["default", "fp8"], {}] } }, output: ["MODEL"], category: "loaders" },
+  }, "use z_image_turbo_bf16.safetensors", 100, 120000);
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0].required.unet_name.truncated, true);
+  assert.equal(catalog[0].required.unet_name.total_choices, 9000);
+  assert.ok(catalog[0].required.unet_name.choices.includes("z_image_turbo_bf16.safetensors"));
+  assert.ok(JSON.stringify(catalog).length < 10000);
+});
+
+test("catalog honors the serialized character budget", () => {
+  const manyNodes = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`CustomNode${index}`, {
+    input: { required: { prompt: ["STRING", {}] } }, output: ["IMAGE"], category: `custom/${"x".repeat(200)}`,
+  }]));
+  const catalog = buildNodeCatalog(manyNodes, "custom", 100, 2500);
+  assert.ok(catalog.length < 100);
+  assert.ok(JSON.stringify(catalog).length <= 2600);
+});

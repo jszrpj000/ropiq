@@ -60,7 +60,14 @@ export class LlmClient {
       method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(180000),
     });
     if (!response.ok && jsonMode && response.status === 400) return this.requestOpenAi(system, messages, false);
-    if (!response.ok) throw new Error(`大模型 API 请求失败 (${response.status})`);
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const payload = await response.json();
+        detail = String(payload?.error?.message || payload?.message || "").slice(0, 400);
+      } catch { /* response body is optional */ }
+      throw new Error(`大模型 API 请求失败 (${response.status})${detail ? `：${detail}` : ""}`);
+    }
     const payload = await response.json();
     return payload?.choices?.[0]?.message?.content;
   }

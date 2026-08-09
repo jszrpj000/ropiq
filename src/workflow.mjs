@@ -7,17 +7,31 @@ function words(value) {
   return String(value || "").toLowerCase().split(/[^a-z0-9_]+/).filter((word) => word.length > 2);
 }
 
-function compactInputMap(inputs = {}) {
+function compactChoices(values, queryWords, limit = 40) {
+  if (values.length <= limit) return values;
+  const ranked = values.map((value, index) => {
+    const text = String(value).toLowerCase();
+    let score = 0;
+    for (const queryWord of queryWords) {
+      if (text.includes(queryWord) || queryWord.includes(text)) score += 100;
+    }
+    return { value, index, score };
+  }).sort((a, b) => b.score - a.score || a.index - b.index);
+  return { choices: ranked.slice(0, limit).map((item) => item.value), total_choices: values.length, truncated: true };
+}
+
+function compactInputMap(inputs = {}, queryWords = new Set()) {
   const result = {};
   for (const [name, spec] of Object.entries(inputs)) {
-    result[name] = Array.isArray(spec) ? spec[0] : spec;
+    const typeOrChoices = Array.isArray(spec) ? spec[0] : spec;
+    result[name] = Array.isArray(typeOrChoices) ? compactChoices(typeOrChoices, queryWords) : typeOrChoices;
   }
   return result;
 }
 
-export function buildNodeCatalog(objectInfo, query, limit = 100) {
+export function buildNodeCatalog(objectInfo, query, limit = 100, maxChars = 120000) {
   const queryWords = new Set(words(query));
-  return Object.entries(objectInfo || {})
+  const ranked = Object.entries(objectInfo || {})
     .map(([classType, definition]) => {
       const haystack = words(`${classType} ${definition.display_name || ""} ${definition.category || ""}`);
       let score = definition.output_node ? 30 : 0;
@@ -30,15 +44,24 @@ export function buildNodeCatalog(objectInfo, query, limit = 100) {
       return {
         class_type: classType,
         category: definition.category || "",
-        required: compactInputMap(definition.input?.required),
-        optional: compactInputMap(definition.input?.optional),
+        required: compactInputMap(definition.input?.required, queryWords),
+        optional: compactInputMap(definition.input?.optional, queryWords),
         outputs: definition.output || [],
         output_node: Boolean(definition.output_node),
         score,
       };
     })
-    .sort((a, b) => b.score - a.score || a.class_type.localeCompare(b.class_type))
-    .slice(0, limit);
+    .sort((a, b) => b.score - a.score || a.class_type.localeCompare(b.class_type));
+  const selected = [];
+  let usedChars = 2;
+  for (const node of ranked) {
+    if (selected.length >= limit) break;
+    const nodeChars = JSON.stringify(node).length + 1;
+    if (selected.length > 0 && usedChars + nodeChars > maxChars) continue;
+    selected.push(node);
+    usedChars += nodeChars;
+  }
+  return selected;
 }
 
 function isLink(value, workflow) {

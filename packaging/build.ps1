@@ -6,7 +6,7 @@ $distRoot = Join-Path $repoRoot "dist"
 $payloadRoot = Join-Path $buildRoot "payload"
 $nodeRoot = (Resolve-Path (Join-Path $repoRoot "..\tools\runtime\node-v22.23.1-win-x64")).Path
 $compiler = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-$version = "0.4.0-alpha.1"
+$version = "0.4.0-alpha.2"
 
 if (-not $buildRoot.StartsWith($repoRoot, [System.StringComparison]::OrdinalIgnoreCase)) { throw "Build directory escaped repository root" }
 if (Test-Path $buildRoot) { Remove-Item -LiteralPath $buildRoot -Recurse -Force }

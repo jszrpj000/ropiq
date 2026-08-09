@@ -26,7 +26,7 @@ Ropiq does not distribute or automatically start third-party runtimes, models, n
 
 ## Windows installer
 
-Download `Ropiq-Setup-0.4.0-alpha.1.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
+Download `Ropiq-Setup-0.4.0-alpha.2.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
 
 The alpha installer is not code-signed, so Windows may show an unknown-publisher warning. Verify the SHA-256 value published with the release before opening it.
 
