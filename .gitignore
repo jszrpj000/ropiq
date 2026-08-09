@@ -7,6 +7,9 @@ custom_nodes/
 third_party/
 runs/*
 !runs/.gitkeep
+.ropiq-data/
+dist/
+build/
 assets/approved/*
 !assets/approved/.gitkeep
 *.log

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Ropiq 是一个独立的对话式生成工作流智能体。">
   <title>Ropiq</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -16,6 +17,8 @@
       </div>
 
       <button id="new-chat" class="new-session"><span>＋</span> 新建会话</button>
+      <button id="open-setup" class="rail-tool"><span>⚙</span> 连接与配置</button>
+      <button id="open-extensions" class="rail-tool"><span>⬡</span> Skills 与插件</button>
 
       <div class="rail-section">
         <p class="rail-label">快捷指令</p>
@@ -24,6 +27,7 @@
           <button data-prompt="查看当前执行队列"><span>02</span>执行队列</button>
           <button data-prompt="列出当前可用模型，并按用途分组"><span>03</span>模型能力</button>
           <button data-prompt="释放显存"><span>04</span>释放显存</button>
+          <button id="cloud-stop" hidden><span>05</span>停止云实例</button>
         </nav>
       </div>
 
@@ -86,9 +90,63 @@
         <h3>已授权素材</h3>
         <div id="assets" class="asset-list"><p class="muted">正在读取…</p></div>
       </section>
+      <section>
+        <h3>智能体扩展</h3>
+        <div id="extension-summary" class="asset-list"><p class="muted">正在读取…</p></div>
+      </section>
       <div class="privacy-note"><span>LOCAL</span> 默认仅监听 127.0.0.1，不上传密钥和运行记录。</div>
     </aside>
   </div>
+
+  <dialog id="setup-dialog" class="modal">
+    <form id="setup-form" method="dialog">
+      <div class="modal-head">
+        <div><span class="header-kicker">FIRST RUN</span><h2>连接 Ropiq</h2><p>密钥只保存在本机用户目录，不会返回浏览器。</p></div>
+        <button type="button" class="icon-button" data-close="setup-dialog" aria-label="关闭">×</button>
+      </div>
+      <section class="form-section">
+        <div class="section-title"><span>01</span><div><strong>大模型驱动</strong><small>可以使用 DeepSeek 或任何兼容接口</small></div></div>
+        <div class="form-grid">
+          <label>接口类型<select name="llmProvider"><option value="openai-compatible">OpenAI 兼容（含 DeepSeek）</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label>
+          <label>模型名称<input name="llmModel" placeholder="deepseek-chat" required></label>
+          <label class="wide">API 地址<input name="llmBaseUrl" placeholder="https://api.deepseek.com/v1" required></label>
+          <label class="wide">API 密钥<input name="llmApiKey" type="password" autocomplete="new-password" placeholder="已保存时留空可保留原密钥"></label>
+        </div>
+      </section>
+      <section class="form-section">
+        <div class="section-title"><span>02</span><div><strong>生成后端</strong><small>用户自行安装的节点图后端，可暂时跳过</small></div></div>
+        <div class="form-grid"><label class="wide">后端地址<input name="backendBaseUrl" placeholder="http://127.0.0.1:8188"></label></div>
+      </section>
+      <section class="form-section">
+        <div class="section-title"><span>03</span><div><strong>云实例控制</strong><small>填平台/自建网关提供的完整 API 地址；停止前始终确认</small></div></div>
+        <div class="form-grid">
+          <label class="wide">状态查询 URL<input name="cloudStatusUrl" placeholder="https://gateway.example/instances/abc"></label>
+          <label class="wide">停止实例 URL<input name="cloudStopUrl" placeholder="https://gateway.example/instances/abc/stop"></label>
+          <label class="wide">访问令牌<input name="cloudToken" type="password" autocomplete="new-password" placeholder="已保存时留空可保留原令牌"></label>
+        </div>
+      </section>
+      <section class="form-section">
+        <div class="section-title"><span>04</span><div><strong>GitHub 扩展目录</strong><small>下载后核对哈希并扫描，陌生代码不会直接执行</small></div></div>
+        <div class="form-grid"><label class="wide">目录 URL<input name="catalogUrl" placeholder="https://raw.githubusercontent.com/.../ropiq-catalog.json"></label></div>
+      </section>
+      <p id="setup-result" class="form-result"></p>
+      <div class="modal-actions">
+        <button type="button" id="test-llm" class="secondary">测试模型（调用一次 API）</button>
+        <button type="submit" class="primary">保存并进入</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="extensions-dialog" class="modal compact-modal">
+    <div class="modal-head">
+      <div><span class="header-kicker">EXTENSIONS</span><h2>Skills 与插件</h2><p>智能体会自动选择已安装 Skill，并从 GitHub 安全目录发现扩展。</p></div>
+      <button type="button" class="icon-button" data-close="extensions-dialog" aria-label="关闭">×</button>
+    </div>
+    <div class="security-banner"><span id="scanner-dot" class="status-dot"></span><div><strong id="scanner-title">安全扫描器检查中</strong><small id="scanner-copy">安装扩展前会执行基础扫描。</small></div></div>
+    <div id="installed-extensions" class="extension-list"></div>
+    <div class="catalog-head"><strong>GitHub 可安装目录</strong><button id="refresh-catalog" class="secondary">刷新</button></div>
+    <div id="catalog-extensions" class="extension-list"><p class="muted">点击刷新读取目录。</p></div>
+  </dialog>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

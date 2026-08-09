@@ -2,7 +2,7 @@
 
 Ropiq is an independent, conversation-first agent for local generation workflows. A user describes the result they want; Ropiq reads the capabilities exposed by a user-configured backend, proposes candidate graphs, validates them locally, and recommends the best valid workflow.
 
-> Status: early alpha. The planning, validation, approval, and execution loop works. A desktop installer and broader backend support are roadmap items.
+> Status: installable alpha. The guided configuration, planning, extension selection, validation, approval, and execution loop works. Broader generation-backend and cloud-provider adapters remain roadmap items.
 
 ## What works
 
@@ -12,10 +12,21 @@ Ropiq is an independent, conversation-first agent for local generation workflows
 - Human approval before generation, upload, queue clearing, interruption, or memory release.
 - Queue/history inspection, approved-asset upload, output download, and non-secret run records.
 - Connection to a generation backend installed and controlled by the user.
+- A first-run setup wizard for DeepSeek or other OpenAI-compatible, Anthropic, and Gemini APIs.
+- Automatic selection of local `SKILL.md` bundles and declarative plugin tools.
+- GitHub catalog discovery with fixed file lists, SHA-256 verification, size limits, and pre-enable security scanning.
+- Optional NVIDIA SkillSpector integration when its `skillspector` executable is installed.
+- Generic cloud-instance status and stop endpoints; stopping always requires explicit confirmation.
 
 Ropiq does not distribute or automatically start third-party runtimes, models, nodes, templates, drivers, or assets. Hardware and model support come from the backend and components the user chooses to install under their respective licenses.
 
-## Quick start
+## Windows installer
+
+Download `Ropiq-Setup-0.3.0-alpha.1.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
+
+The alpha installer is not code-signed, so Windows may show an unknown-publisher warning. Verify the SHA-256 value published with the release before opening it.
+
+## Source quick start
 
 Requires Node.js 22 or later and a separately installed supported generation backend.
 
@@ -52,9 +63,11 @@ Local OpenAI-compatible services such as Ollama, vLLM, and LM Studio can leave `
 
 - The LLM proposes plans; it cannot bypass the deterministic validator.
 - Side effects require a separate confirmation request.
-- Only files under `assets/approved/` can be uploaded.
+- Only files under the per-user `assets/approved/` directory can be uploaded.
 - The server listens on `127.0.0.1` by default.
-- `.env.local`, runtimes, models, custom nodes, user assets, and run data are ignored by Git.
+- API keys, runtimes, models, custom nodes, user assets, and run data are never returned by the setup API and are ignored by Git.
+- GitHub extensions cannot choose arbitrary download URLs at execution time. Catalog entries pin each allowed file and SHA-256 digest.
+- Declarative plugins can call only URLs configured by the user; LLM output cannot replace those URLs.
 - No third-party logo, interface asset, model, node, workflow, or runtime is part of this repository.
 
 See [Compatibility and independence](docs/COMPATIBILITY.md), [Third-party notices](THIRD_PARTY_NOTICES.md), and [Security](SECURITY.md).
