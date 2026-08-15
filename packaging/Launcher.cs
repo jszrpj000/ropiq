@@ -14,6 +14,7 @@ internal static class Launcher
     {
         Application.EnableVisualStyles();
         string root = AppDomain.CurrentDomain.BaseDirectory;
+        if (!File.Exists(Path.Combine(root, "server.mjs"))) root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Ropiq") + Path.DirectorySeparatorChar;
         string node = Path.Combine(root, "runtime", "node.exe");
         string server = Path.Combine(root, "server.mjs");
         string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ropiq");
@@ -47,7 +48,7 @@ internal static class Launcher
     {
         try
         {
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(Url + "api/bootstrap");
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(Url);
             request.Timeout = 800;
             request.ReadWriteTimeout = 800;
             using (HttpWebResponse response = (HttpWebResponse)request.GetResponse()) return response.StatusCode == HttpStatusCode.OK;

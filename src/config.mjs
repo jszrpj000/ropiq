@@ -49,6 +49,7 @@ function settingEnv(settings) {
     BACKEND_TYPE: settings.backend?.type,
     BACKEND_BASE_URL: settings.backend?.baseUrl,
     BACKEND_API_TOKEN: settings.backend?.token,
+    ROPIQ_FFMPEG_PATH: settings.media?.ffmpegPath,
   };
 }
 
@@ -69,6 +70,9 @@ export function loadConfig(projectRoot, overrides = {}, processEnv = process.env
       type: env.BACKEND_TYPE || "comfyui",
       baseUrl: cleanUrl(env.BACKEND_BASE_URL || env.COMFYUI_BASE_URL),
       token: env.BACKEND_API_TOKEN || env.COMFYUI_API_TOKEN || "",
+    },
+    media: {
+      ffmpegPath: String(env.ROPIQ_FFMPEG_PATH || "").trim(),
     },
     llm: {
       provider: env.LLM_PROVIDER || "openai-compatible",
@@ -114,6 +118,9 @@ export function saveSettings(dataRoot, input) {
       baseUrl: validateHttpUrl(input.backend?.baseUrl, "生成后端地址"),
       token: String(input.backend?.token || "").trim() || previous.backend?.token || "",
     },
+    media: {
+      ffmpegPath: String(input.media?.ffmpegPath ?? previous.media?.ffmpegPath ?? "").trim(),
+    },
     extensions: {
       catalogUrl: validateHttpUrl(input.extensions?.catalogUrl || previous.extensions?.catalogUrl || "https://raw.githubusercontent.com/jszrpj000/ropiq/main/ropiq-catalog.json", "扩展目录地址", false),
       autoInstallSkills: input.extensions?.autoInstallSkills !== false,
@@ -137,6 +144,7 @@ export function publicConfig(config) {
     dataRoot: config.dataRoot,
     llm: { provider: config.llm.provider, baseUrl: config.llm.baseUrl, model: config.llm.model, hasApiKey: Boolean(config.llm.apiKey) },
     backend: { type: config.backend.type, baseUrl: config.backend.baseUrl, hasToken: Boolean(config.backend.token) },
+    media: { ffmpegPath: config.media.ffmpegPath || "" },
     extensions: {
       catalogUrl: config.extensions.catalogUrl || "https://raw.githubusercontent.com/jszrpj000/ropiq/main/ropiq-catalog.json",
       autoInstallSkills: config.extensions.autoInstallSkills !== false,

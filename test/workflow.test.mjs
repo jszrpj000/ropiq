@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedVideoCandidate, buildTrustedVoiceCandidate, rankCandidates, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "../src/workflow.mjs";
+import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedLipSyncCandidate, buildTrustedVideoCandidate, buildTrustedVoiceCandidate, rankCandidates, STUDIO_SOURCE_AUDIO_PLACEHOLDER, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "../src/workflow.mjs";
 
 const objectInfo = {
   LoadImage: {
@@ -233,4 +233,50 @@ test("builds a trusted local Qwen voice workflow for FB nodes", () => {
   assert.equal(candidate.workflow["2"].inputs.filename_prefix, "RopiqStudio/test-fb-voice");
   assert.equal(validateWorkflow(candidate.workflow, info).valid, true);
   assert.equal(validateSelfHostedWorkflow(candidate.workflow).valid, true);
+});
+
+test("builds a trusted LongCat lip-sync graph from the installed template", () => {
+  const enumInput = (values) => [values, {}];
+  const objectInfo = {
+    LongCatLoader: { input: { required: { model: enumInput(["LongCat/LongCat-Avatar-single_fp8_e4m3fn_scaled_mixed_KJ.safetensors"]) } } },
+    WanVaeLoader: { input: { required: { model_name: enumInput(["Wan2_1_VAE_bf16.safetensors"]) } } },
+    LongCatLora: { input: { required: { lora: enumInput(["LongCat/LongCat_distill_lora_alpha64_bf16.safetensors"]) } } },
+    TextEncoder: { input: { required: { model_name: enumInput(["umt5-xxl-enc-bf16.safetensors"]), positive_prompt: ["STRING", {}], negative_prompt: ["STRING", {}] } } },
+    LoadImage: { input: { required: { image: enumInput(["input.png"]) } } },
+    LoadAudio: { input: { required: { audio: enumInput(["voice.flac"]) } } },
+    AudioBridge: { input: { required: { audio_1: ["AUDIO", { forceInput: true }] } } },
+    IntValue: { input: { required: { value: ["INT", {}] } } },
+    LongCatSampler: { input: { required: {} } },
+    Decoder: { input: { required: {} } },
+    VideoCombine: { input: { required: {} }, output_node: true },
+  };
+  const nodes = [
+    { id: 122, type: "LongCatLoader", widgets_values: { model: "old" }, inputs: [] },
+    { id: 129, type: "WanVaeLoader", widgets_values: { model_name: "old" }, inputs: [] },
+    { id: 138, type: "LongCatLora", widgets_values: { lora: "old" }, inputs: [] },
+    { id: 241, type: "TextEncoder", widgets_values: { model_name: "old", positive_prompt: "old", negative_prompt: "old" }, inputs: [] },
+    { id: 284, type: "LoadImage", widgets_values: { image: "input.png" }, inputs: [] },
+    { id: 125, type: "LoadAudio", widgets_values: { audio: "voice.flac" }, inputs: [] },
+    { id: 194, type: "AudioBridge", inputs: [{ name: "audio_1", link: 1 }] },
+    { id: 438, type: "IntValue", widgets_values: { value: 37 }, inputs: [] },
+    { id: 324, type: "LongCatSampler", widgets_values: { cfg: 1, seed: 1 }, inputs: [
+      { name: "model", link: 2 }, { name: "vae", link: 3 }, { name: "lora", link: 4 }, { name: "text_embeds", link: 5 },
+      { name: "image_embeds", link: 6 }, { name: "audio_embeds", link: 7 }, { name: "length", link: 8 },
+    ] },
+    { id: 313, type: "Decoder", inputs: [{ name: "samples", link: 9 }] },
+    { id: 320, type: "VideoCombine", widgets_values: { frame_rate: 16, filename_prefix: "old", save_output: true }, inputs: [{ name: "images", link: 10 }, { name: "audio", link: 11 }] },
+  ];
+  const links = [
+    [1, 125, 0, 194, 0, "AUDIO"], [2, 122, 0, 324, 0, "MODEL"], [3, 129, 0, 324, 1, "VAE"],
+    [4, 138, 0, 324, 2, "LORA"], [5, 241, 0, 324, 3, "TEXT"], [6, 284, 0, 324, 4, "IMAGE"],
+    [7, 194, 0, 324, 5, "AUDIO"], [8, 438, 0, 324, 6, "INT"], [9, 324, 0, 313, 0, "LATENT"],
+    [10, 313, 0, 320, 0, "IMAGE"], [11, 125, 0, 320, 1, "AUDIO"],
+  ];
+  const candidate = buildTrustedLipSyncCandidate(objectInfo, { nodes, links }, { execution: { jobs: [{ duration_seconds: 2.2, fps: 16, width: 1280, height: 720 }] } }, "RopiqStudio/test-lip");
+  assert.ok(candidate);
+  assert.equal(candidate.workflow["284"].inputs.image, STUDIO_SOURCE_IMAGE_PLACEHOLDER);
+  assert.equal(candidate.workflow["125"].inputs.audio, STUDIO_SOURCE_AUDIO_PLACEHOLDER);
+  assert.equal(candidate.workflow["438"].inputs.value, 35);
+  assert.equal(candidate.workflow["320"].inputs.filename_prefix, "RopiqStudio/test-lip");
+  assert.equal(candidate.sourceInputs.length, 2);
 });

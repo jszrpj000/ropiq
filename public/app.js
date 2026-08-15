@@ -213,10 +213,23 @@ function populateSetup() {
   setupForm.elements.llmModel.value = cfg.llm.model || "deepseek-chat";
   setupForm.elements.llmApiKey.value = "";
   setupForm.elements.backendBaseUrl.value = cfg.backend.baseUrl;
+  setupForm.elements.ffmpegPath.value = cfg.media?.ffmpegPath || "";
   setupForm.elements.cloudStatusUrl.value = cfg.plugins.cloudLifecycle.statusUrl;
   setupForm.elements.cloudStopUrl.value = cfg.plugins.cloudLifecycle.stopUrl;
   setupForm.elements.cloudToken.value = "";
   setupForm.elements.catalogUrl.value = cfg.extensions.catalogUrl;
+  setupForm.elements.backendLocation.value = /^https:\/\//i.test(cfg.backend.baseUrl || "") ? "cloud" : "local";
+  updateBackendGuide();
+}
+
+function updateBackendGuide() {
+  const cloud = setupForm.elements.backendLocation.value === "cloud";
+  setupForm.elements.backendBaseUrl.placeholder = cloud ? "https://实例专属域名:端口" : "http://127.0.0.1:8188";
+  document.querySelector("#backend-guide-title").textContent = cloud ? "算力云连接方法" : "本机连接方法";
+  document.querySelector("#backend-guide-copy").textContent = cloud
+    ? "先在算力平台点开真正的 ComfyUI WebUI，再复制该页面浏览器地址栏里的完整地址。"
+    : "先在这台电脑启动 ComfyUI，并确认浏览器能打开 http://127.0.0.1:8188。";
+  document.querySelector("#cloud-control-section").hidden = !cloud;
 }
 
 function openSetup() {
@@ -229,6 +242,7 @@ function setupPayload() {
   return {
     llm: { provider: values.get("llmProvider"), baseUrl: values.get("llmBaseUrl"), apiKey: values.get("llmApiKey"), model: values.get("llmModel") },
     backend: { baseUrl: values.get("backendBaseUrl") },
+    media: { ffmpegPath: values.get("ffmpegPath") },
     extensions: { catalogUrl: values.get("catalogUrl"), autoInstallSkills: true },
     plugins: { cloudLifecycle: { statusUrl: values.get("cloudStatusUrl"), stopUrl: values.get("cloudStopUrl"), token: values.get("cloudToken") } },
   };
@@ -333,6 +347,7 @@ function inferredStageCapability(stage, artifact) {
   }
   if (stage.executor === "llm") return { ready: Boolean(bootstrapData?.llmConfigured), text: bootstrapData?.llmConfigured ? "大模型可生成并保存本阶段内容" : "请先配置大模型接口" };
   if (stage.executor === "comfyui") return { ready: Boolean(bootstrapData?.connected), text: bootstrapData?.connected ? "节点图后端已连接；生成后会先保存待确认任务规格" : "请连接本地或云端节点图后端" };
+  if (stage.executor === "local:media") return { ready: Boolean(bootstrapData?.mediaRuntimeReady), text: bootstrapData?.mediaRuntimeReady ? "已连接用户提供的本地媒体工具；执行前仍会展示计划并请求确认" : "请先在连接与配置中填写自己合法取得的 FFmpeg 程序路径" };
   const keyword = stage.executor.slice(7);
   const ready = bootstrapData?.tools?.some((tool) => tool.configured && `${tool.plugin_id} ${tool.tool}`.toLowerCase().includes(keyword));
   return { ready: Boolean(ready), text: ready ? `${keyword} 插件已配置；执行前仍需确认` : `缺少 ${keyword} 执行插件；本阶段仍可先生成任务规格` };
@@ -393,8 +408,9 @@ function renderStudioExecutionPlan(plan) {
   panel.hidden = false;
   document.querySelector("#studio-execution-title").textContent = plan.recommended.title;
   document.querySelector("#studio-execution-score").textContent = `${plan.recommended.validation.score}/100`;
-  document.querySelector("#studio-execution-reply").textContent = plan.reply || "节点图已通过本地校验，等待确认。";
+  document.querySelector("#studio-execution-reply").textContent = plan.reply || "执行计划已通过本地校验，等待确认。";
   document.querySelector("#studio-execution-workflow").textContent = JSON.stringify(plan.recommended.workflow, null, 2);
+  document.querySelector("#studio-confirm-execution").textContent = plan.executionKind === "local_media" ? "确认执行本地处理" : "确认执行节点图";
 }
 
 function renderStudioProject(project) {
@@ -443,9 +459,10 @@ function renderStudioProject(project) {
   document.querySelector("#studio-action-result").textContent = stage.summary || "";
   document.querySelector("#studio-run-stage").textContent = ["complete", "specified", "stale", "error"].includes(stage.status) ? "重新生成当前阶段" : "生成当前阶段";
   const prepareExecution = document.querySelector("#studio-prepare-execution");
-  prepareExecution.hidden = stage.executor !== "comfyui" || !artifact;
-  prepareExecution.disabled = !bootstrapData?.connected || stage.status === "running";
-  prepareExecution.title = bootstrapData?.connected ? "生成并校验可执行节点图" : "生成后端当前离线";
+  prepareExecution.hidden = !["comfyui", "local:media"].includes(stage.executor) || !artifact;
+  prepareExecution.disabled = (stage.executor === "comfyui" && !bootstrapData?.connected) || stage.status === "running";
+  prepareExecution.textContent = stage.executor === "local:media" ? "生成并校验本地处理计划" : "生成并校验节点图";
+  prepareExecution.title = stage.executor === "local:media" ? "生成并校验本地媒体处理计划" : (bootstrapData?.connected ? "生成并校验可执行节点图" : "生成后端当前离线");
   renderStudioProjectList();
 }
 
@@ -518,11 +535,12 @@ async function prepareStudioExecution(button) {
   if (!currentStudioProject) return;
   const result = document.querySelector("#studio-action-result");
   button.disabled = true;
-  result.textContent = "正在根据阶段产物选择真实节点、模型并校验节点图…";
+  const stage = currentStudioProject.stages.find((item) => item.id === selectedStudioStageId);
+  result.textContent = stage?.executor === "local:media" ? "正在检查上游文件并校验本地媒体处理计划…" : "正在根据阶段产物选择真实节点、模型并校验节点图…";
   try {
     const plan = await api(`/api/studio/projects/${currentStudioProject.id}/stages/${selectedStudioStageId}/prepare-execution`, { method: "POST", body: "{}" });
     renderStudioExecutionPlan(plan);
-    result.textContent = `节点图已通过校验：${plan.recommended.validation.score}/100。请检查后确认执行。`;
+    result.textContent = `执行计划已通过校验：${plan.recommended.validation.score}/100。请检查后确认执行。`;
   } catch (error) {
     result.textContent = error.message;
   } finally {
@@ -559,20 +577,31 @@ async function pollStudioExecution(projectId, stageId, promptId, immediate = fal
 
 async function confirmStudioExecution(button) {
   if (!studioPendingExecution) return;
-  if (!window.confirm("确认发送这个已校验节点图？它会使用本地或云端 GPU，并可能产生费用。")) return;
+  const local = studioPendingExecution.executionKind === "local_media";
+  const batchCount = Number(studioPendingExecution.batchCount || 1);
+  if (!window.confirm(local ? "确认执行这个本地媒体处理计划？它会读取上游输出并在本机生成新文件。" : `确认整批提交 ${batchCount} 个已校验节点图任务？它们会使用本地或云端 GPU，并可能产生费用。`)) return;
   button.disabled = true;
   const result = document.querySelector("#studio-action-result");
   result.textContent = "正在执行前重新校验并提交…";
   try {
     const pending = studioPendingExecution;
     const confirmed = await api("/api/confirm", { method: "POST", body: JSON.stringify({ planId: pending.planId, approved: true }) });
-    const promptId = confirmed.result?.prompt_id;
-    if (!promptId || !confirmed.studioProject) throw new Error("云端没有返回有效任务 ID");
+    const promptIds = confirmed.result?.prompt_ids?.length ? confirmed.result.prompt_ids : [confirmed.result?.prompt_id].filter(Boolean);
+    const promptId = promptIds[0];
+    if (!promptId || !confirmed.studioProject) throw new Error(local ? "本地执行没有返回有效任务 ID" : "云端没有返回有效任务 ID");
     currentStudioProject = confirmed.studioProject;
     studioPendingExecution = null;
     renderStudioProject(currentStudioProject);
-    result.textContent = `任务 ${promptId.slice(0, 8)} 已提交，正在等待输出…`;
-    await pollStudioExecution(pending.projectId, pending.stageId, promptId);
+    if (confirmed.result?.local) {
+      result.textContent = `本地处理已完成，生成 ${confirmed.result.outputs?.length || 0} 个可下载文件。`;
+      await refreshStudioProjects();
+      return;
+    }
+    for (let index = 0; index < promptIds.length; index += 1) {
+      result.textContent = `整批已提交 ${promptIds.length} 个任务；正在同步 ${index + 1}/${promptIds.length}…`;
+      await pollStudioExecution(pending.projectId, pending.stageId, promptIds[index]);
+    }
+    result.textContent = `${promptIds.length} 个任务已完成状态同步；请在执行记录中检查每个镜头的输出或错误。`;
   } catch (error) {
     result.textContent = error.message;
     button.disabled = false;
@@ -687,6 +716,16 @@ document.querySelector("#test-llm").addEventListener("click", async (event) => {
   button.disabled = true;
   try { await saveSetup(); await api("/api/setup/test", { method: "POST", body: JSON.stringify({ scope: "llm" }) }); document.querySelector("#setup-result").textContent = "模型连接测试通过。"; }
   catch (error) { document.querySelector("#setup-result").textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
+setupForm.querySelectorAll('input[name="backendLocation"]').forEach((input) => input.addEventListener("change", updateBackendGuide));
+
+document.querySelector("#test-backend").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try { await saveSetup(); await api("/api/setup/test", { method: "POST", body: JSON.stringify({ scope: "backend" }) }); document.querySelector("#setup-result").textContent = "生成后端连接测试通过，已经读取到节点和模型。"; }
+  catch (error) { document.querySelector("#setup-result").textContent = `生成后端连接失败：${error.message}`; }
   finally { button.disabled = false; }
 });
 

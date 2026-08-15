@@ -7,9 +7,10 @@ import { loadConfig, publicConfig, saveSettings } from "./src/config.mjs";
 import { ComfyUiClient, summarizeSnapshot } from "./src/comfyui.mjs";
 import { ExtensionRegistry } from "./src/extensions.mjs";
 import { LlmClient } from "./src/llm.mjs";
+import { executeMediaPlan, resolveFfmpeg, validateMediaPlan } from "./src/media.mjs";
 import { skillSpectorStatus } from "./src/security.mjs";
 import { compileStagePrompts, StudioStore, STUDIO_PIPELINES, splitLongText, validateStagePromptArtifact } from "./src/studio.mjs";
-import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedVideoCandidate, buildTrustedVoiceCandidate, rankCandidates, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "./src/workflow.mjs";
+import { buildNodeCatalog, buildTrustedImageCandidate, buildTrustedLipSyncCandidate, buildTrustedVideoCandidate, buildTrustedVoiceCandidate, rankCandidates, STUDIO_SOURCE_AUDIO_PLACEHOLDER, STUDIO_SOURCE_IMAGE_PLACEHOLDER, validateSelfHostedWorkflow, validateWorkflow } from "./src/workflow.mjs";
 
 const agentRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = agentRoot;
@@ -61,7 +62,7 @@ async function readJson(request, maxBytes = 1024 * 1024) {
 }
 
 function contentType(filePath) {
-  return ({ ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" })[path.extname(filePath)] || "application/octet-stream";
+  return ({ ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".mp4": "video/mp4", ".webm": "video/webm", ".srt": "application/x-subrip; charset=utf-8", ".json": "application/json; charset=utf-8" })[path.extname(filePath).toLowerCase()] || "application/octet-stream";
 }
 
 function serveStatic(requestPath, response) {
@@ -95,7 +96,7 @@ function remember(session, role, content) {
 
 function listApprovedAssets() {
   const root = path.resolve(config.dataRoot, "assets", "approved");
-  const allowed = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+  const allowed = new Set([".png", ".jpg", ".jpeg", ".webp", ".wav", ".flac", ".mp3", ".m4a", ".ogg", ".mp4", ".webm"]);
   const results = [];
   function walk(directory) {
     if (!fs.existsSync(directory)) return;
@@ -122,8 +123,8 @@ function writeRunRecord(plan, status, extra = {}) {
   const date = new Date().toISOString().slice(0, 10);
   const directory = path.join(config.dataRoot, "runs", date);
   fs.mkdirSync(directory, { recursive: true });
-  const workflowPath = plan.workflow ? path.join(directory, `${plan.id}.workflow.json`) : "";
-  if (workflowPath) fs.writeFileSync(workflowPath, `${JSON.stringify(plan.workflow, null, 2)}\n`, "utf8");
+  const workflowPath = plan.workflow || plan.batch?.length ? path.join(directory, `${plan.id}.${plan.batch?.length ? "batch" : "workflow"}.json`) : "";
+  if (workflowPath) fs.writeFileSync(workflowPath, `${JSON.stringify(plan.batch?.length ? plan.batch.map(({ jobId, shotId, lineId, workflow, validation }) => ({ jobId, shotId, lineId, workflow, validation })) : plan.workflow, null, 2)}\n`, "utf8");
   const record = {
     task_id: plan.id,
     status,
@@ -141,10 +142,13 @@ function writeRunRecord(plan, status, extra = {}) {
 function validationWorkflow(workflow, objectInfo, allowDeferredSource = false) {
   if (!allowDeferredSource) return workflow;
   const copy = structuredClone(workflow);
-  const imageChoices = objectInfo?.LoadImage?.input?.required?.image?.[0];
-  const fallbackImage = Array.isArray(imageChoices) ? imageChoices[0] : "";
   for (const node of Object.values(copy || {})) {
-    if (node?.class_type === "LoadImage" && node.inputs?.image === STUDIO_SOURCE_IMAGE_PLACEHOLDER) node.inputs.image = fallbackImage;
+    for (const [inputName, value] of Object.entries(node?.inputs || {})) {
+      if (![STUDIO_SOURCE_IMAGE_PLACEHOLDER, STUDIO_SOURCE_AUDIO_PLACEHOLDER].includes(value)) continue;
+      const spec = objectInfo?.[node.class_type]?.input?.required?.[inputName] || objectInfo?.[node.class_type]?.input?.optional?.[inputName];
+      const choices = Array.isArray(spec?.[0]) ? spec[0] : [];
+      node.inputs[inputName] = choices[0] || (value === STUDIO_SOURCE_AUDIO_PLACEHOLDER ? "ropiq-placeholder.flac" : "ropiq-placeholder.png");
+    }
   }
   return copy;
 }
@@ -156,18 +160,82 @@ function validateStudioWorkflow(workflow, objectInfo, systemStats, allowDeferred
   return { ...structural, valid: errors.length === 0, score: Math.max(0, structural.score - policy.errors.length * 25), errors };
 }
 
-function studioSourceOutput(project, stageId) {
-  const sourceStageId = stageId === "video_generation" ? "image_generation" : stageId === "product_video" ? "product_images" : "";
-  const runs = project.artifacts?.[sourceStageId]?.execution?.runs || [];
-  for (const run of [...runs].reverse()) {
-    if (run.status !== "success") continue;
-    const output = (run.outputs || []).find((item) => item.kind === "images" && /\.(?:png|jpe?g|webp)$/i.test(String(item.filename || "")));
-    if (output) return { filename: output.filename, subfolder: output.subfolder || "", type: output.type || "output" };
+function studioRemoteOutputRecords(project, stageIds, extensionPattern) {
+  const outputs = [];
+  for (const stageId of stageIds) {
+    const runs = project.artifacts?.[stageId]?.execution?.runs || [];
+    const latest = new Map();
+    for (const run of runs) if (run.status === "success") latest.set(run.jobId || "legacy", run);
+    for (const run of latest.values()) for (const output of run.outputs || []) {
+      if (!extensionPattern.test(String(output.filename || ""))) continue;
+      outputs.push({ filename: output.filename, subfolder: output.subfolder || "", type: output.type || "output", jobId: run.jobId || "", shotId: run.shotId || "", lineId: run.lineId || "" });
+    }
   }
-  throw new Error("视频生成需要首帧：请先在图像生成阶段执行并得到一张成功的关键帧");
+  return outputs;
 }
 
-async function uploadStudioSourceImage(plan) {
+function studioRemoteOutputs(project, stageIds, extensionPattern) {
+  return studioRemoteOutputRecords(project, stageIds, extensionPattern).map(({ filename, subfolder, type }) => ({ filename, subfolder, type }));
+}
+
+function studioRemoteOutputForJob(project, stageId, extensionPattern, references = []) {
+  const records = studioRemoteOutputRecords(project, [stageId], extensionPattern);
+  for (const reference of references.map(String).filter(Boolean)) {
+    const matched = [...records].reverse().find((item) => [item.jobId, item.shotId, item.lineId].includes(reference));
+    if (matched) return (({ filename, subfolder, type }) => ({ filename, subfolder, type }))(matched);
+  }
+  const fallback = records.at(-1);
+  return fallback ? (({ filename, subfolder, type }) => ({ filename, subfolder, type }))(fallback) : null;
+}
+
+function studioLocalOutput(project, stageIds, extensionPattern) {
+  for (const stageId of stageIds) {
+    const runs = project.artifacts?.[stageId]?.execution?.runs || [];
+    for (const run of [...runs].reverse()) {
+      if (run.status !== "success") continue;
+      for (const output of run.outputs || []) {
+        if (!extensionPattern.test(String(output.filename || "")) || !output.localRelativePath) continue;
+        const projectRoot = path.resolve(studio.directory(project.id));
+        const resolved = path.resolve(projectRoot, output.localRelativePath);
+        if (resolved.startsWith(`${projectRoot}${path.sep}`) && fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved;
+      }
+    }
+  }
+  return "";
+}
+
+async function downloadStudioRemoteOutput(source, destination, maxBytes) {
+  if (!source || [source.filename, source.subfolder].some((value) => String(value || "").includes("..")) || !["output", "temp"].includes(source.type || "output")) throw new Error("云端媒体输出路径无效");
+  const params = new URLSearchParams({ filename: source.filename, subfolder: source.subfolder || "", type: source.type || "output" });
+  const response = await backend.request(`view?${params}`, { timeoutMs: 120000 });
+  const declaredSize = Number(response.headers.get("content-length") || 0);
+  if (declaredSize > maxBytes) throw new Error("云端媒体文件超过本地处理大小上限");
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > maxBytes) throw new Error("云端媒体文件为空或超过本地处理大小上限");
+  fs.writeFileSync(destination, bytes, { mode: 0o600 });
+}
+
+async function uploadStudioSources(plan) {
+  if (Array.isArray(plan.studio?.sourceAssets) && plan.studio.sourceAssets.length) {
+    const workflow = structuredClone(plan.workflow);
+    for (const asset of plan.studio.sourceAssets) {
+      const source = asset.source;
+      if (!source || !asset.nodeId || !asset.inputName || !asset.placeholder) throw new Error("口型源素材计划不完整");
+      if ([source.filename, source.subfolder].some((value) => String(value || "").includes("..")) || !["output", "temp"].includes(source.type || "output")) throw new Error("口型源素材路径无效");
+      const maxBytes = asset.kind === "audio" ? 200 * 1024 * 1024 : 50 * 1024 * 1024;
+      const extension = path.extname(source.filename).toLowerCase() || (asset.kind === "audio" ? ".flac" : ".png");
+      const params = new URLSearchParams({ filename: source.filename, subfolder: source.subfolder || "", type: source.type || "output" });
+      const response = await backend.request(`view?${params}`, { timeoutMs: 120000 });
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length || bytes.length > maxBytes) throw new Error(`${asset.kind === "audio" ? "配音" : "关键帧"}文件为空或超过大小上限`);
+      const upload = await backend.uploadImage(`ropiq-${plan.studio.projectId.slice(0, 8)}-${asset.kind}-${randomUUID().slice(0, 8)}${extension}`, bytes);
+      if (!upload?.name) throw new Error("素材上传后未返回文件名");
+      const uploadedName = upload.subfolder ? `${upload.subfolder}/${upload.name}` : upload.name;
+      if (workflow?.[asset.nodeId]?.inputs?.[asset.inputName] !== asset.placeholder) throw new Error("口型素材占位节点已被修改，请重新生成执行计划");
+      workflow[asset.nodeId].inputs[asset.inputName] = uploadedName;
+    }
+    return workflow;
+  }
   const source = plan.studio?.sourceOutput;
   const nodeId = plan.studio?.sourceImageNodeId;
   if (!source || !nodeId) return plan.workflow;
@@ -179,13 +247,134 @@ async function uploadStudioSourceImage(plan) {
   const bytes = Buffer.from(await response.arrayBuffer());
   if (!bytes.length || bytes.length > 50 * 1024 * 1024) throw new Error("首帧文件为空或超过 50 MB");
   const extension = path.extname(source.filename).toLowerCase();
-  const upload = await backend.uploadImage(`ropiq-${plan.studio.projectId.slice(0, 8)}-${Date.now()}${extension}`, bytes);
+  const upload = await backend.uploadImage(`ropiq-${plan.studio.projectId.slice(0, 8)}-${randomUUID().slice(0, 8)}${extension}`, bytes);
   if (!upload?.name) throw new Error("首帧上传后未返回文件名");
   const uploadedName = upload.subfolder ? `${upload.subfolder}/${upload.name}` : upload.name;
   const workflow = structuredClone(plan.workflow);
   if (workflow?.[nodeId]?.inputs?.image !== STUDIO_SOURCE_IMAGE_PLACEHOLDER) throw new Error("首帧占位节点已被修改，请重新生成执行计划");
   workflow[nodeId].inputs.image = uploadedName;
   return workflow;
+}
+
+function defaultMediaDimensions(aspectRatio) {
+  if (aspectRatio === "9:16") return { width: 720, height: 1280 };
+  if (aspectRatio === "1:1") return { width: 1080, height: 1080 };
+  return { width: 1280, height: 720 };
+}
+
+function publicMediaPlan(plan) {
+  return {
+    ...plan,
+    videoSources: (plan.videoSources || []).map(({ filename, subfolder, type }) => ({ filename, subfolder, type })),
+    narrationSource: plan.narrationSource ? (({ filename, subfolder, type }) => ({ filename, subfolder, type }))(plan.narrationSource) : null,
+    subtitleFile: plan.subtitleFile ? path.basename(plan.subtitleFile) : "",
+    musicFile: plan.musicFile ? path.basename(plan.musicFile) : "",
+    inputFile: plan.inputFile ? path.basename(plan.inputFile) : "",
+  };
+}
+
+function prepareLocalMediaExecution(project, stage, artifact) {
+  const job = artifact.execution?.jobs?.[0] || {};
+  const dimensions = defaultMediaDimensions(project.settings?.aspectRatio);
+  let mediaPlan;
+  if (["audio_caption", "product_audio_caption"].includes(stage.id)) {
+    mediaPlan = { kind: "subtitles", captions: artifact.execution.jobs };
+  } else if (["editing", "product_editing"].includes(stage.id)) {
+    const videoStage = stage.id === "editing" ? "lip_sync" : "product_video";
+    const videoSources = studioRemoteOutputs(project, [videoStage], /\.(?:mp4|webm|mov|mkv)$/i);
+    if (!videoSources.length) throw new Error(`剪辑缺少成功的${stage.id === "editing" ? "口型" : "商品"}视频，请先执行上游视频阶段`);
+    const captionStage = stage.id === "editing" ? "audio_caption" : "product_audio_caption";
+    const subtitleFile = studioLocalOutput(project, [captionStage], /\.srt$/i);
+    if (job.burn_subtitles !== false && !subtitleFile) throw new Error("剪辑要求烧录字幕，但字幕阶段尚未生成 SRT 文件");
+    const narrationSource = stage.id === "product_editing"
+      ? studioRemoteOutputs(project, ["product_voice"], /\.(?:wav|flac|mp3|m4a|ogg)$/i).at(-1) || null
+      : null;
+    const musicFile = job.music_asset_ref ? approvedAssetPath(job.music_asset_ref) : "";
+    mediaPlan = {
+      kind: "edit",
+      videoSources,
+      narrationSource,
+      subtitleFile,
+      musicFile,
+      burnSubtitles: job.burn_subtitles !== false,
+      width: Number(job.width) || dimensions.width,
+      height: Number(job.height) || dimensions.height,
+      fps: Number(job.fps) || 24,
+    };
+  } else if (["quality_control", "product_qc"].includes(stage.id)) {
+    const editStage = stage.id === "quality_control" ? "editing" : "product_editing";
+    const inputFile = studioLocalOutput(project, [editStage], /\.mp4$/i);
+    if (!inputFile) throw new Error("质检缺少已成功输出的剪辑成片");
+    mediaPlan = { kind: "quality", inputFile };
+  } else if (["final_master", "product_delivery"].includes(stage.id)) {
+    const editStage = stage.id === "final_master" ? "editing" : "product_editing";
+    const qcStage = stage.id === "final_master" ? "quality_control" : "product_qc";
+    const qualityPassed = (project.artifacts?.[qcStage]?.execution?.runs || []).some((run) => run.status === "success");
+    if (!qualityPassed) throw new Error("成片交付前必须先完成一次成功的本地质检");
+    const inputFile = studioLocalOutput(project, [editStage], /\.mp4$/i);
+    if (!inputFile) throw new Error("成片交付缺少已成功输出的剪辑文件");
+    mediaPlan = {
+      kind: "master",
+      inputFile,
+      width: Number(job.width) || dimensions.width,
+      height: Number(job.height) || dimensions.height,
+      fps: Number(job.fps) || 24,
+      filename: job.filename || "ropiq-final.mp4",
+    };
+  } else {
+    throw new Error("该阶段尚无受信任的本地媒体执行器");
+  }
+  const validation = validateMediaPlan(mediaPlan);
+  if (!validation.valid) throw new Error(`本地媒体计划未通过校验：${validation.errors.join("；")}`);
+  const id = randomUUID();
+  const plan = {
+    id,
+    message: `${project.title} / ${stage.name}`,
+    actionName: "local_media",
+    mediaPlan,
+    validation,
+    title: `${project.title} · ${stage.name}`,
+    studio: { projectId: project.id, stageId: stage.id },
+  };
+  plans.set(id, plan);
+  writeRunRecord(plan, "planned", { studio_project_id: project.id, studio_stage_id: stage.id, media_kind: mediaPlan.kind });
+  return {
+    kind: "studio_execution",
+    executionKind: "local_media",
+    planId: id,
+    reply: "本地媒体计划已通过校验，等待确认执行。",
+    usedSkills: [],
+    recommended: { title: plan.title, rationale: "使用随安装包提供的本地媒体运行时处理，不调用外部付费媒体 API。", workflow: publicMediaPlan(mediaPlan), validation },
+  };
+}
+
+async function executeLocalMediaPlan(plan) {
+  const runId = randomUUID();
+  const projectDirectory = path.resolve(studio.directory(plan.studio.projectId));
+  const workDir = path.join(projectDirectory, "outputs", plan.studio.stageId, runId);
+  try {
+    const executed = await executeMediaPlan(plan.mediaPlan, {
+      ffmpegPath: resolveFfmpeg(projectRoot, config.media.ffmpegPath),
+      workDir,
+      downloadRemote: downloadStudioRemoteOutput,
+    });
+    const outputs = executed.outputs.map((output) => {
+      const relativePath = path.relative(projectDirectory, output.absolutePath).replaceAll("\\", "/");
+      if (!relativePath || relativePath.startsWith("../") || path.isAbsolute(relativePath)) throw new Error("本地媒体输出超出项目目录");
+      const params = new URLSearchParams({ projectId: plan.studio.projectId, relativePath });
+      return { ...output, absolutePath: undefined, localRelativePath: relativePath, downloadUrl: `/api/local-output?${params}` };
+    });
+    const run = { promptId: runId, status: "success", submittedAt: new Date().toISOString(), completedAt: new Date().toISOString(), title: plan.title, validation: plan.validation, outputs };
+    const project = studio.recordExecutionRun(plan.studio.projectId, plan.studio.stageId, run, "complete");
+    writeRunRecord({ ...plan, id: runId }, "completed", { outputs });
+    return { result: { prompt_id: runId, local: true, outputs }, project };
+  } catch (error) {
+    const run = { promptId: runId, status: "error", submittedAt: new Date().toISOString(), completedAt: new Date().toISOString(), title: plan.title, validation: plan.validation, outputs: [], error: error.message };
+    const project = studio.recordExecutionRun(plan.studio.projectId, plan.studio.stageId, run, "error");
+    writeRunRecord({ ...plan, id: runId }, "failed", { error: error.message });
+    error.studioProject = project;
+    throw error;
+  }
 }
 
 function safeInfoIntent(message) {
@@ -321,32 +510,51 @@ async function confirmPlan(body) {
 
   let result;
   let studioProject = null;
-  if (plan.workflow) {
-    let snapshot = await getSnapshot(true);
-    let workflow = plan.workflow;
-    let validation = plan.studio
-      ? validateStudioWorkflow(workflow, snapshot.objectInfo, snapshot.systemStats, Boolean(plan.studio.sourceOutput))
-      : validateWorkflow(workflow, snapshot.objectInfo, snapshot.systemStats);
-    if (!validation.valid) throw new Error(`执行前校验失败：${validation.errors.join("；")}`);
-    if (plan.studio?.sourceOutput) {
-      workflow = await uploadStudioSourceImage(plan);
-      snapshot = await getSnapshot(true);
-      validation = validateStudioWorkflow(workflow, snapshot.objectInfo, snapshot.systemStats);
-      if (!validation.valid) throw new Error(`首帧上传后的执行校验失败：${validation.errors.join("；")}`);
-      plan.workflow = workflow;
-      plan.validation = validation;
+  if (plan.workflow || plan.batch?.length) {
+    const snapshot = await getSnapshot(true);
+    const entries = plan.batch?.length ? plan.batch : [{ workflow: plan.workflow, validation: plan.validation, title: plan.title, studio: plan.studio || null }];
+    const promptIds = [];
+    try {
+      for (const entry of entries) {
+        const entryPlan = { ...plan, workflow: entry.workflow, validation: entry.validation, studio: entry.studio || plan.studio };
+        const deferred = Boolean(entryPlan.studio?.sourceOutput || entryPlan.studio?.sourceAssets?.length);
+        let workflow = entry.workflow;
+        let validation = entryPlan.studio
+          ? validateStudioWorkflow(workflow, snapshot.objectInfo, snapshot.systemStats, deferred)
+          : validateWorkflow(workflow, snapshot.objectInfo, snapshot.systemStats);
+        if (!validation.valid) throw new Error(`${entry.jobId || entry.title || "任务"} 执行前校验失败：${validation.errors.join("；")}`);
+        if (deferred) {
+          workflow = await uploadStudioSources(entryPlan);
+          validation = validateStudioWorkflow(workflow, snapshot.objectInfo, snapshot.systemStats);
+          if (!validation.valid) throw new Error(`${entry.jobId || entry.title || "任务"} 素材上传后的执行校验失败：${validation.errors.join("；")}`);
+        }
+        const submitted = await backend.submit(workflow, randomUUID());
+        if (!submitted.prompt_id) throw new Error("生成后端没有返回任务 ID");
+        promptIds.push(submitted.prompt_id);
+        if (entryPlan.studio) {
+          studioProject = studio.recordExecutionRun(entryPlan.studio.projectId, entryPlan.studio.stageId, {
+            promptId: submitted.prompt_id,
+            jobId: entry.jobId || "",
+            shotId: entry.shotId || "",
+            lineId: entry.lineId || "",
+            status: "submitted",
+            submittedAt: new Date().toISOString(),
+            title: entry.title || plan.title,
+            validation,
+          }, "running");
+        }
+      }
+    } catch (error) {
+      plans.delete(plan.id);
+      if (promptIds.length) throw new Error(`批量提交在 ${promptIds.length}/${entries.length} 个任务后中断：${error.message}。已提交任务仍会继续运行，请勿重复整批提交。`);
+      throw error;
     }
-    result = await backend.submit(workflow, randomUUID());
-    writeRunRecord(plan, "submitted", { prompt_id: result.prompt_id || "" });
-    if (plan.studio && result.prompt_id) {
-      studioProject = studio.recordExecutionRun(plan.studio.projectId, plan.studio.stageId, {
-        promptId: result.prompt_id,
-        status: "submitted",
-        submittedAt: new Date().toISOString(),
-        title: plan.title,
-        validation: plan.validation,
-      }, "running");
-    }
+    result = { prompt_id: promptIds[0], prompt_ids: promptIds, batch: promptIds.length > 1 };
+    writeRunRecord(plan, "submitted", { prompt_id: promptIds[0], prompt_ids: promptIds });
+  } else if (plan.actionName === "local_media") {
+    const executed = await executeLocalMediaPlan(plan);
+    result = executed.result;
+    studioProject = executed.project;
   } else if (plan.actionName === "interrupt") {
     result = await backend.interrupt();
     writeRunRecord(plan, "executed");
@@ -403,6 +611,10 @@ function stageCapability(stage, snapshot = null, connectionError = "") {
       missing: ready ? [] : [connectionError || (voiceStage && snapshot ? "当前节点图后端缺少兼容的本地 Qwen3-TTS CustomVoice 或 SaveAudio 节点" : (config.backend.baseUrl ? "生成后端当前无法连接" : "未配置本地或云端节点图后端"))],
       backend: snapshot ? summarizeSnapshot(snapshot) : null,
     };
+  }
+  if (stage.executor === "local:media") {
+    const ffmpeg = resolveFfmpeg(projectRoot, config.media.ffmpegPath);
+    return { executor: stage.executor, ready: Boolean(ffmpeg), missing: ffmpeg ? [] : ["请在连接与配置中填写自己合法取得的 FFmpeg 程序路径"] };
   }
   const tools = matchingExecutorTools(stage.executor);
   return {
@@ -478,81 +690,91 @@ async function prepareStudioExecution(projectId, stageId) {
   const project = studio.get(projectId);
   const stage = project.stages.find((item) => item.id === stageId);
   if (!stage) throw new Error("制作阶段不存在");
-  if (stage.executor !== "comfyui") throw new Error("当前阶段不是节点图生成阶段");
+  if (!["comfyui", "local:media"].includes(stage.executor)) throw new Error("当前阶段没有可执行的媒体运行时");
   const artifact = project.artifacts?.[stageId];
   if (!artifact) throw new Error("请先生成并检查该阶段的任务规格");
-  if (!llm.configured) throw new Error("请先配置大模型接口");
-
+  if (stage.executor === "local:media") return prepareLocalMediaExecution(project, stage, artifact);
   const snapshot = await getSnapshot(true, 30000);
   const artifactText = JSON.stringify(artifact).slice(0, 30000);
-  const message = `请为制作项目“${project.title}”的“${stage.name}”阶段生成一个可直接提交的 ComfyUI API 工作流。
-
-项目设置：${JSON.stringify(project.settings)}
-经过用户检查的阶段产物：${artifactText}
-
-要求：
-1. 只使用当前节点目录中真实存在的节点、模型、枚举和输入。
-2. 遵循阶段产物中的镜头、提示词、尺寸、预算和先预览策略；如果有多个任务，当前先生成一个代表性预览。
-3. 必须包含真实输出节点，输出前缀使用 RopiqStudio/${project.id.slice(0, 8)}-${stage.id}。
-4. 不得执行，只返回 workflow 候选并等待人工确认。
-5. 不得引入阶段产物未授权的人物、品牌、声音、模型或素材。
-6. 禁止 FluxKontextPro、OpenAI、Gemini、Kling、Runway、Replicate、fal、Stability API 等任何外部付费/API 生成节点。
-7. 必须使用部署在当前 ComfyUI 内的本地模型和节点；图像/视频使用本地加载与采样节点，配音使用本地 TTS 节点和 SaveAudio。`;
-  const summary = summarizeSnapshot(snapshot);
-  summary.approved_assets = listApprovedAssets();
+  const message = `${project.title} / ${stage.name} / ${artifactText}`;
   const selectedSkills = extensions.selectSkills(`${project.title} ${stage.name} ${artifactText}`);
-  let sourceOutput = null;
+  const jobs = artifact.execution?.jobs?.length ? artifact.execution.jobs : [artifact];
   const outputPrefix = `RopiqStudio/${project.id.slice(0, 8)}-${stage.id}`;
-  const trusted = /image/i.test(stageId)
-    ? buildTrustedImageCandidate(snapshot.objectInfo, artifact, outputPrefix)
-    : /video/i.test(stageId)
-      ? buildTrustedVideoCandidate(snapshot.objectInfo, artifact, outputPrefix)
-      : /voice/i.test(stageId)
-        ? buildTrustedVoiceCandidate(snapshot.objectInfo, artifact, outputPrefix)
-        : null;
-  if (/video/i.test(stageId)) {
-    if (!trusted) throw new Error("当前 ComfyUI 缺少受信任的本地 Wan 图生视频节点或模型，请安装官方 Wan 2.1 I2V 依赖后重试");
-    sourceOutput = studioSourceOutput(project, stageId);
-  }
-  if (/voice/i.test(stageId) && !trusted) throw new Error("当前 ComfyUI 缺少受信任的本地 Qwen3-TTS CustomVoice 或 SaveAudio 节点，请安装兼容节点和本地模型后重试");
-  const result = trusted
-    ? { intent: "workflow", reply: "已根据当前 ComfyUI 中的本地模型和节点生成受信任工作流。", candidates: [trusted] }
-    : await llm.plan({
-      message,
-      catalog: buildNodeCatalog(snapshot.objectInfo, `${message} local model UNETLoader CLIPLoader VAELoader KSampler VAEDecode SaveImage Qwen TTS SaveAudio ${artifactText}`),
-      summary,
-      skills: selectedSkills,
-      tools: extensions.tools().filter((tool) => tool.configured),
-      availableExtensions: [],
-    });
-  if (result.intent !== "workflow") throw new Error("大模型没有返回可校验的节点工作流");
-  const ranked = (Array.isArray(result.candidates) ? result.candidates : []).map((candidate, index) => ({
-    ...candidate,
-    validation: validateStudioWorkflow(candidate.workflow, snapshot.objectInfo, snapshot.systemStats, Boolean(candidate.sourceImageNodeId)),
-    originalIndex: index,
-  })).sort((a, b) => b.validation.score - a.validation.score || a.originalIndex - b.originalIndex);
-  if (!ranked.length) throw new Error("大模型没有返回工作流候选");
-  const recommended = ranked[0];
-  if (!recommended.validation.valid) throw new Error(`候选工作流未通过本地校验：${recommended.validation.errors.slice(0, 8).join("；")}`);
+  const longCatTemplate = stageId === "lip_sync"
+    ? await backend.json("api/workflow_templates/ComfyUI-WanVideoWrapper/LongCatAvatar_audio_image_to_video_example_01.json", { timeoutMs: 30000 })
+    : null;
+  const batch = jobs.map((job, index) => {
+    const jobId = String(job.id || job.shot_id || `${stageId}-${index + 1}`);
+    const safeJobId = jobId.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 64) || String(index + 1);
+    const jobArtifact = { ...artifact, execution: { ...(artifact.execution || {}), jobs: [job] } };
+    const prefix = `${outputPrefix}-${safeJobId}`;
+    let candidate;
+    let sourceOutput = null;
+    let sourceAssets = [];
+    if (stageId === "lip_sync") {
+      candidate = buildTrustedLipSyncCandidate(snapshot.objectInfo, longCatTemplate, jobArtifact, prefix);
+      if (!candidate) throw new Error("当前 ComfyUI 缺少 LongCat 口型模板、兼容节点或本地 LongCat/Wan/UMT5 模型");
+      const image = studioRemoteOutputForJob(project, "image_generation", /\.(?:png|jpe?g|webp)$/i, [job.image_ref, job.shot_id]);
+      const audio = studioRemoteOutputForJob(project, "voice_synthesis", /\.(?:wav|flac|mp3|m4a|ogg)$/i, [job.audio_ref, job.line_id, job.shot_id]);
+      if (!image) throw new Error(`口型任务 ${jobId} 缺少匹配的角色关键帧`);
+      if (!audio) throw new Error(`口型任务 ${jobId} 缺少匹配的配音文件`);
+      sourceAssets = candidate.sourceInputs.map((input) => ({ ...input, source: input.kind === "audio" ? audio : image }));
+    } else if (/image/i.test(stageId)) {
+      candidate = buildTrustedImageCandidate(snapshot.objectInfo, jobArtifact, prefix);
+      if (!candidate) throw new Error("当前 ComfyUI 缺少受信任的本地 Z-Image 节点或模型");
+    } else if (/video/i.test(stageId)) {
+      candidate = buildTrustedVideoCandidate(snapshot.objectInfo, jobArtifact, prefix);
+      if (!candidate) throw new Error("当前 ComfyUI 缺少受信任的本地 Wan 图生视频节点或模型");
+      const sourceStage = stageId === "product_video" ? "product_images" : "image_generation";
+      sourceOutput = studioRemoteOutputForJob(project, sourceStage, /\.(?:png|jpe?g|webp)$/i, [job.source_image_ref, job.shot_id]);
+      if (!sourceOutput) throw new Error(`视频任务 ${jobId} 缺少匹配的首帧图像`);
+    } else if (/voice/i.test(stageId)) {
+      candidate = buildTrustedVoiceCandidate(snapshot.objectInfo, jobArtifact, prefix);
+      if (!candidate) throw new Error("当前 ComfyUI 缺少受信任的本地 Qwen3-TTS CustomVoice 或 SaveAudio 节点");
+    } else {
+      throw new Error("当前阶段没有受信任的节点图构建器");
+    }
+    const deferred = Boolean(sourceOutput || sourceAssets.length);
+    const validation = validateStudioWorkflow(candidate.workflow, snapshot.objectInfo, snapshot.systemStats, deferred);
+    if (!validation.valid) throw new Error(`任务 ${jobId} 未通过本地校验：${validation.errors.slice(0, 8).join("；")}`);
+    return {
+      jobId,
+      shotId: String(job.shot_id || ""),
+      lineId: String(job.line_id || ""),
+      title: `${stage.name} · ${jobId}`,
+      workflow: candidate.workflow,
+      validation,
+      studio: { projectId, stageId, sourceOutput, sourceAssets, sourceImageNodeId: candidate.sourceImageNodeId || "" },
+    };
+  });
+  const validation = {
+    valid: batch.every((entry) => entry.validation.valid),
+    score: Math.min(...batch.map((entry) => entry.validation.score)),
+    errors: batch.flatMap((entry) => entry.validation.errors.map((error) => `${entry.jobId}: ${error}`)),
+    warnings: batch.flatMap((entry) => entry.validation.warnings || []),
+  };
 
   const id = randomUUID();
   const plan = {
     id,
     message,
-    workflow: recommended.workflow,
-    validation: recommended.validation,
-    title: recommended.title || `${project.title} · ${stage.name}`,
+    batch,
+    validation,
+    title: `${project.title} · ${stage.name}`,
     skills: selectedSkills.map((skill) => skill.id),
-    studio: { projectId, stageId, sourceOutput, sourceImageNodeId: recommended.sourceImageNodeId || "" },
+    studio: { projectId, stageId },
   };
   plans.set(id, plan);
-  writeRunRecord(plan, "planned", { studio_project_id: projectId, studio_stage_id: stageId });
+  writeRunRecord(plan, "planned", { studio_project_id: projectId, studio_stage_id: stageId, batch_count: batch.length });
+  const displayWorkflow = batch.length === 1 ? batch[0].workflow : { batch_count: batch.length, jobs: batch.map(({ jobId, shotId, lineId, title, workflow }) => ({ jobId, shotId, lineId, title, workflow })) };
   return {
     kind: "studio_execution",
     planId: id,
-    reply: result.reply || "节点图已生成并通过本地校验，等待确认执行。",
+    reply: `已生成并校验 ${batch.length} 个节点图任务，等待一次确认后整批提交。`,
     usedSkills: plan.skills,
-    recommended: { title: plan.title, rationale: recommended.rationale || "", workflow: recommended.workflow, validation: recommended.validation },
+    executionKind: "comfyui",
+    batchCount: batch.length,
+    recommended: { title: plan.title, rationale: "按任务独立输出并登记 job_id、shot_id 和 line_id；不会用一次预览冒充整批完成。", workflow: displayWorkflow, validation },
   };
 }
 
@@ -595,7 +817,10 @@ async function syncStudioExecution(projectId, stageId, promptId) {
     outputs: collectJobOutputs(job),
     error: success ? "" : jobError(job),
   };
-  const updated = studio.recordExecutionRun(projectId, stageId, run, success ? "complete" : "error");
+  const nextRuns = runs.map((item) => item.promptId === promptId ? run : item);
+  const pending = nextRuns.some((item) => !["success", "error"].includes(item.status));
+  const stageStatus = pending ? "running" : nextRuns.some((item) => item.status === "error") ? "error" : "complete";
+  const updated = studio.recordExecutionRun(projectId, stageId, run, stageStatus);
   writeRunRecord({ id: promptId, message: `${project.title} / ${stageId}`, actionName: "studio_execution" }, success ? "completed" : "failed", { prompt_id: promptId, outputs: run.outputs, error: run.error });
   return { completed: true, run, project: updated };
 }
@@ -619,6 +844,7 @@ async function handleApi(request, response, url) {
       summary,
       approvedAssets: listApprovedAssets(),
       config: publicConfig(config),
+      mediaRuntimeReady: Boolean(resolveFfmpeg(projectRoot, config.media.ffmpegPath)),
       extensions: extensions.summary(),
       tools: extensions.tools(),
       security: await skillSpectorStatus(),
@@ -714,6 +940,22 @@ async function handleApi(request, response, url) {
       "Content-Disposition": `attachment; filename="${path.basename(filename).replaceAll('"', "")}"`,
     });
     response.end(Buffer.from(await upstream.arrayBuffer()));
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/local-output") {
+    const projectId = url.searchParams.get("projectId") || "";
+    const relativePath = url.searchParams.get("relativePath") || "";
+    if (!/^[a-f0-9-]{36}$/.test(projectId) || !relativePath || relativePath.includes("..")) throw new Error("本地输出路径无效");
+    const projectDirectory = path.resolve(studio.directory(projectId));
+    const outputDirectory = path.join(projectDirectory, "outputs");
+    const resolved = path.resolve(projectDirectory, relativePath);
+    if (!resolved.startsWith(`${outputDirectory}${path.sep}`) || !fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) throw new Error("本地输出不存在");
+    response.writeHead(200, {
+      "Content-Type": contentType(resolved),
+      "Content-Length": fs.statSync(resolved).size,
+      "Content-Disposition": `attachment; filename="${path.basename(resolved).replaceAll('"', "")}"`,
+    });
+    fs.createReadStream(resolved).pipe(response);
     return;
   }
   return false;

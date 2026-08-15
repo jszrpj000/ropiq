@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ropiq 新手连接指南</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0d151e; --card: #111c27; --text: #eef4f3; --muted: #96a6b0; --orange: #ffb06a; --teal: #70d8cf; --line: #283a48; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.75 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+    main { width: min(920px, calc(100% - 32px)); margin: 34px auto 70px; }
+    header, section { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 26px 30px; margin-bottom: 18px; }
+    h1, h2, h3 { line-height: 1.3; }
+    h1 { color: var(--orange); margin: 0 0 10px; }
+    h2 { color: var(--teal); margin-top: 0; }
+    h3 { margin-bottom: 6px; }
+    p, li { color: var(--muted); }
+    strong { color: var(--text); }
+    code { color: var(--orange); background: #0a1118; border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; overflow-wrap: anywhere; }
+    .value { display: block; margin: 9px 0; padding: 13px 15px; background: #0a1118; border-left: 4px solid var(--orange); border-radius: 8px; color: var(--text); overflow-wrap: anywhere; }
+    .note { border-left: 4px solid var(--teal); padding-left: 16px; }
+    .warn { border-left: 4px solid var(--orange); padding-left: 16px; }
+    ol, ul { padding-left: 23px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Ropiq 新手使用说明</h1>
+    <p>Ropiq 是对话式 AI 短剧和商品视频制作智能体。你用大白话说明想做什么，它负责规划步骤、选择可用节点和参数；真正的图像、视频与音频计算由你连接的本机或算力云生成后端完成。</p>
+  </header>
+
+  <section>
+    <h2>第一次打开</h2>
+    <ol>
+      <li>双击桌面的 <strong>Ropiq</strong> 图标。</li>
+      <li>在配置向导中填写你自己的大模型 API。使用 DeepSeek 时，接口类型选 <strong>OpenAI 兼容</strong>，API 地址通常填 <code>https://api.deepseek.com</code>，模型名称和密钥按你的账号填写。</li>
+      <li>在“生成后端”填写 ComfyUI 地址。可以先跳过，进入软件后再修改。</li>
+      <li>如果要在本机执行字幕、剪辑、质检和成片，填写你自己合法取得的 <code>ffmpeg.exe</code> 完整路径；暂时不需要可以留空。</li>
+      <li>点击 <strong>测试模型</strong>，成功后点击 <strong>保存并进入</strong>。</li>
+    </ol>
+    <p class="warn"><strong>密钥安全：</strong>只在 Ropiq 本机配置页填写密钥，不要把密钥发到聊天、截图、GitHub 或说明文档中。Ropiq 不附带第三方模型、节点或算力。</p>
+  </section>
+
+  <section id="media-tool">
+    <h2>可选：配置本机媒体工具</h2>
+    <p>为了降低公开安装包的第三方再分发风险，Ropiq <strong>不捆绑 FFmpeg</strong>。这不影响小说解析、剧本、人物、场景、分镜、提示词和云端节点图生成；只有本机字幕、剪辑、解码质检与最终成片需要它。</p>
+    <ol>
+      <li>从你信任且有权使用的来源取得适合 Windows 的 FFmpeg，并阅读该发行版本附带的许可证。</li>
+      <li>找到它的实际程序文件，例如 <code>C:\Tools\ffmpeg\bin\ffmpeg.exe</code>。要填写的是完整文件路径，不是文件夹。</li>
+      <li>在 Ropiq 的“连接与配置 → 本机媒体工具”粘贴路径并保存。</li>
+      <li>回到短剧制作台；本地媒体阶段显示可执行，说明路径已被识别。</li>
+    </ol>
+    <p class="note">FFmpeg 项目与许可证说明：<a href="https://ffmpeg.org/download.html" target="_blank" rel="noopener">官方获取页面</a>、<a href="https://ffmpeg.org/legal.html" target="_blank" rel="noopener">官方法律与许可证说明</a>。Ropiq 不代替第三方发行方授予许可证。</p>
+  </section>
+
+  <section>
+    <h2>方案一：连接本机 ComfyUI</h2>
+    <ol>
+      <li>先启动本机 ComfyUI，并在浏览器确认它能正常打开。</li>
+      <li>如果 ComfyUI 和 Ropiq 在同一台电脑，生成后端地址通常填写：</li>
+    </ol>
+    <span class="value">http://127.0.0.1:8188</span>
+    <ol start="3">
+      <li>回到 Ropiq 配置页，接口类型保持 <strong>ComfyUI</strong>，粘贴地址并保存。</li>
+      <li>进入制作台后查看后端状态。能读取节点、模型、显卡和队列信息，说明连接成功。</li>
+    </ol>
+    <p class="note"><strong>局域网连接：</strong>如果 ComfyUI 在另一台电脑，要填写那台电脑的局域网地址，例如 <code>http://192.168.1.50:8188</code>，并确保 ComfyUI 允许局域网访问且 Windows 防火墙已放行对应端口。不要把未加保护的 ComfyUI 端口直接暴露到公网。</p>
+  </section>
+
+  <section>
+    <h2>方案二：连接算力云上的 ComfyUI</h2>
+    <ol>
+      <li>在算力平台创建或启动一个带 ComfyUI 的 GPU 实例。</li>
+      <li>等待实例状态变为“运行中”，点击平台提供的 <strong>WebUI / ComfyUI / 访问应用服务</strong>入口。</li>
+      <li>浏览器成功打开 ComfyUI 后，复制地址栏里的完整公网地址。常见形式如下：</li>
+    </ol>
+    <span class="value">https://实例专属域名:端口</span>
+    <ol start="4">
+      <li>把完整地址粘贴到 Ropiq 的 <strong>生成后端地址</strong>，末尾有没有 <code>/</code> 都可以。</li>
+      <li>如果平台为 WebUI 设置了访问令牌，在 Ropiq 的后端令牌栏填写；没有令牌就留空。</li>
+      <li>保存后确认 Ropiq 能读取后端节点和模型，再开始生成。</li>
+    </ol>
+    <p class="note"><strong>最可靠的找地址方法：</strong>不要复制实例列表页、JupyterLab、SSH 或后台管理页的地址。一定要先点开真正的 ComfyUI 页面，再复制该页面浏览器地址栏里的地址。实例关机、释放或重建后，公网地址可能改变，需要在 Ropiq 中重新保存。</p>
+  </section>
+
+  <section>
+    <h2>连接失败时检查</h2>
+    <ul>
+      <li><strong>浏览器先测：</strong>同一台电脑的浏览器都打不开该地址时，Ropiq 也无法连接。</li>
+      <li><strong>实例状态：</strong>确认云实例处于运行中，而不是已关机、启动中或已释放。</li>
+      <li><strong>页面是否正确：</strong>地址打开后应看到 ComfyUI 节点界面，而不是登录页、JupyterLab 或平台控制台。</li>
+      <li><strong>本机端口：</strong>默认常见端口是 <code>8188</code>，但以你实际启动参数为准。</li>
+      <li><strong>模型与节点：</strong>连接成功只代表网络可达；工作流需要的模型或自定义节点仍要在后端正确安装。</li>
+      <li><strong>云费用：</strong>生成结束后到算力平台核对任务和计费状态。只有已经配置云平台状态、停止接口和令牌时，Ropiq 才能请求停止实例，而且停止前会再次要求确认。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>开始对话</h2>
+    <p>可以直接说：<strong>“把这篇小说改成 3 集竖屏短剧，写实电影风，每集 60 秒，先完成人物、场景和分镜，生成前让我确认。”</strong></p>
+    <p>也可以进入“短剧制作”或“商品视频”工作台，按表单逐项填写。新手建议先用大白话描述目标，再在结构化页面检查人物、镜头、配音和生成参数。</p>
+  </section>
+
+  <section>
+    <h2>独立性说明</h2>
+    <p>Ropiq 是独立开源项目，不包含 ComfyUI、FFmpeg、第三方模型、插件、工作流、驱动或品牌素材，也不隶属于或代表 Comfy Org。Windows 安装包只附带运行 Ropiq 自身所需的 Node.js 及其完整许可证。请只安装你有权使用且来源可信的外部组件，并遵守各自许可证。</p>
+  </section>
+</main>
+</body>
+</html>

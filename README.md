@@ -2,7 +2,7 @@
 
 Ropiq is an independent, conversation-first agent for local generation workflows. A user describes the result they want; Ropiq reads the capabilities exposed by a user-configured backend, proposes candidate graphs, validates them locally, and recommends the best valid workflow.
 
-> Status: installable alpha. The guided configuration, 17-stage AI drama studio, 14-stage product-video studio, planning, extension selection, validation, approval, self-hosted image execution, compatible Wan 2.1 image-to-video previews, compatible local Qwen3-TTS voice previews, and result-sync loop work. Lip-sync and editing executor adapters remain roadmap items.
+> Status: installable alpha. The guided configuration, 17-stage AI drama studio, 14-stage product-video studio, planning, extension selection, validation, approval, per-job batch submission, self-hosted image execution, compatible Wan 2.1 image-to-video, compatible local Qwen3-TTS voice, trusted LongCat lip-sync plan generation, and the local subtitle/edit/decode-QC/final-master chain are implemented. Local finishing requires a user-supplied FFmpeg executable. A live LongCat run still depends on the connected ComfyUI instance having the compatible template, nodes, and local models.
 
 ## What works
 
@@ -31,7 +31,11 @@ Ropiq does not distribute or automatically start third-party runtimes, models, n
 
 ## Windows installer
 
-Download `Ropiq-Setup-0.4.0-alpha.7.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes its own Node.js runtime, and opens the setup wizard. Administrator rights are not required.
+Download `Ropiq-Setup-0.4.0-alpha.10.exe` from GitHub Releases, open it, and choose **安装并打开**. It installs per user under `%LOCALAPPDATA%\Programs\Ropiq`, includes the Node.js runtime and its complete license notices, creates Start menu and desktop shortcuts by default, and opens the setup wizard. Administrator rights are not required.
+
+The public installer intentionally does not bundle ComfyUI, FFmpeg, models, custom nodes, workflow packs, GPU drivers, or third-party generation plugins. Users who want local subtitle, editing, decode-QC, and final-master execution can point Ropiq to an FFmpeg executable they obtained under an applicable license.
+
+The installed Start menu folder includes a Chinese beginner guide covering first-run setup and connections to local or cloud-hosted ComfyUI backends.
 
 The alpha installer is not code-signed, so Windows may show an unknown-publisher warning. Verify the SHA-256 value published with the release before opening it.
 
@@ -77,9 +81,9 @@ Local OpenAI-compatible services such as Ollama, vLLM, and LM Studio can leave `
 - API keys, runtimes, models, custom nodes, user assets, and run data are never returned by the setup API and are ignored by Git.
 - GitHub extensions cannot choose arbitrary download URLs at execution time. Catalog entries pin each allowed file and SHA-256 digest.
 - Declarative plugins can call only URLs configured by the user; LLM output cannot replace those URLs.
-- No third-party logo, interface asset, model, node, workflow, or runtime is part of this repository.
+- No third-party logo, interface asset, model, node, workflow, or generation runtime is part of this repository. The Windows installer's Node.js runtime is disclosed in `BUNDLED_COMPONENTS.md` and ships with its complete upstream license file.
 
-See [Compatibility and independence](docs/COMPATIBILITY.md), [Third-party notices](THIRD_PARTY_NOTICES.md), and [Security](SECURITY.md).
+See [Bundled components](BUNDLED_COMPONENTS.md), [Compatibility and independence](docs/COMPATIBILITY.md), [Third-party notices](THIRD_PARTY_NOTICES.md), and [Security](SECURITY.md).
 
 ## Free and open
 

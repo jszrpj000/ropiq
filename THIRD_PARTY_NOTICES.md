@@ -25,6 +25,12 @@ Official Windows release installers bundle the Node.js runtime so end users do n
 - Project: <https://nodejs.org/>
 - License: <https://github.com/nodejs/node/blob/main/LICENSE>
 
+Official Windows release installers do not bundle FFmpeg. Local subtitle, editing, decode-QC, and final-master execution can use an FFmpeg executable selected by the user. Users must obtain it from an authorized source and follow the license that applies to their chosen build.
+
+- Project and source: <https://ffmpeg.org/download.html>
+- License information: <https://www.ffmpeg.org/legal.html>
+FFmpeg's name identifies optional compatibility only. Ropiq is not affiliated with or endorsed by the FFmpeg project.
+
 ## Optional security scanner
 
 Ropiq can detect and invoke NVIDIA SkillSpector when the user installs it separately. SkillSpector is not bundled in the source repository or Windows installer.

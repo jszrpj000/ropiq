@@ -51,6 +51,21 @@ export function studioPromptContract(stage) {
   if (["voice_synthesis", "product_voice"].includes(stage.id)) {
     return `配音任务强制结构：execution.jobs 必须是非空数组。每个任务必须包含 id、line_id、shot_id、character_id、text、synthesis_text、language、speaker、scene_context、emotional_cause、target_duration_seconds、performance_beats 和 voice_prompt。performance_beats 必须按语义或情绪转折拆分短语，并包含 text、delivery、pause_after_ms。voice_prompt 必须包含 voice_profile、emotion、intensity、volume、pace、breath、pauses、emphasis、tail_tone、pronunciation、restrictions、compiled_instruction、engine_instruction。speaker 必须使用当前节点目录中真实列出的音色；停顿和重音要绑定具体字词或标点；发声参数要由场景和情绪原因推导；不得使用真人姓名或要求模仿未授权真人声音。`;
   }
+  if (stage.id === "lip_sync") {
+    return `口型任务强制结构：execution.jobs 必须是非空数组。每个任务必须包含 id、shot_id、image_ref、audio_ref、duration_seconds、fps、width、height、positive_prompt、negative_prompt。只允许成年虚构人物或已取得肖像与声音授权的人物；镜头必须保证正脸或可见嘴部，并写明遮挡、快速转头和多人画面的降级策略。`;
+  }
+  if (["audio_caption", "product_audio_caption"].includes(stage.id)) {
+    return `字幕任务强制结构：execution.jobs 必须是按时间排序的非空数组，每项必须包含 id、shot_id、start_seconds、end_seconds、text、speaker。时间不得重叠，字幕应按语义断句。data.audio_plan 可以列出环境声、动作音效和音乐，但 music_asset_ref 或 effect_asset_ref 只能引用用户已批准且有权使用的本地素材；没有素材时必须留空，不得编造。`;
+  }
+  if (["editing", "product_editing"].includes(stage.id)) {
+    return `剪辑任务强制结构：execution.jobs 必须包含一个主任务，字段至少有 id、width、height、fps、burn_subtitles、music_asset_ref。画幅必须符合项目设置；music_asset_ref 只能引用用户已批准且有权使用的本地音频，缺少时留空。剪辑顺序、转场和音轨安排写入 data.timeline。`;
+  }
+  if (["quality_control", "product_qc"].includes(stage.id)) {
+    return `质检任务强制结构：execution.jobs 必须包含一个带 id 的主任务。data.checks 必须覆盖解码完整性、画幅、帧率、口型、字幕遮挡、响度、角色一致性、版权来源和 AI 标识，并用 pass、warning 或 fail 表示结果；无法从当前资料判断的项目必须标为 pending，不得假称已检测。`;
+  }
+  if (["final_master", "product_delivery"].includes(stage.id)) {
+    return `成片任务强制结构：execution.jobs 必须包含一个主任务，字段至少有 id、width、height、fps、filename。filename 必须是安全的 mp4 文件名。data.delivery 必须列出平台版本、AI 辅助制作标识、封面与元数据要求；执行后由本地媒体运行时生成 SHA-256。`;
+  }
   return "";
 }
 

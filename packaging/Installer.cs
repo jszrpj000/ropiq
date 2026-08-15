@@ -71,9 +71,24 @@ internal sealed class InstallForm : Form
             using (Stream source = Assembly.GetExecutingAssembly().GetManifestResourceStream("Ropiq.Payload.zip"))
             using (FileStream destination = File.Create(zip)) source.CopyTo(destination);
             ZipFile.ExtractToDirectory(zip, temp);
-            if (Directory.Exists(target)) Directory.Delete(target, true);
             Directory.CreateDirectory(Path.GetDirectoryName(target));
-            Directory.Move(temp, target);
+            string backup = null;
+            if (Directory.Exists(target))
+            {
+                backup = target + ".previous-" + Guid.NewGuid().ToString("N");
+                Directory.Move(target, backup);
+            }
+            try
+            {
+                Directory.Move(temp, target);
+                if (backup != null) Directory.Delete(backup, true);
+            }
+            catch
+            {
+                if (Directory.Exists(target)) Directory.Delete(target, true);
+                if (backup != null && Directory.Exists(backup)) Directory.Move(backup, target);
+                throw;
+            }
             File.Delete(zip);
             CreateShortcuts(target, desktopShortcut.Checked);
             RegisterUninstaller(target);
@@ -93,7 +108,7 @@ internal sealed class InstallForm : Form
 
     internal void RunSilent()
     {
-        desktopShortcut.Checked = false;
+        desktopShortcut.Checked = true;
         Install(this, EventArgs.Empty);
     }
 
@@ -104,22 +119,17 @@ internal sealed class InstallForm : Form
 
     private static void CreateShortcuts(string target, bool desktop)
     {
-        Type shellType = Type.GetTypeFromProgID("WScript.Shell");
-        dynamic shell = Activator.CreateInstance(shellType);
         string group = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Ropiq");
+        if (Directory.Exists(group)) Directory.Delete(group, true);
         Directory.CreateDirectory(group);
-        CreateShortcut(shell, Path.Combine(group, "Ropiq.lnk"), Path.Combine(target, "Ropiq.exe"), target);
-        CreateShortcut(shell, Path.Combine(group, "卸载 Ropiq.lnk"), Path.Combine(target, "RopiqUninstall.exe"), target);
-        if (desktop) CreateShortcut(shell, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Ropiq.lnk"), Path.Combine(target, "Ropiq.exe"), target);
-    }
-
-    private static void CreateShortcut(dynamic shell, string shortcutPath, string targetPath, string workingDirectory)
-    {
-        dynamic shortcut = shell.CreateShortcut(shortcutPath);
-        shortcut.TargetPath = targetPath;
-        shortcut.WorkingDirectory = workingDirectory;
-        shortcut.IconLocation = targetPath + ",0";
-        shortcut.Save();
+        File.Copy(Path.Combine(target, "Ropiq.exe"), Path.Combine(group, "Ropiq.exe"), true);
+        File.WriteAllText(Path.Combine(group, "Ropiq 新手说明.url"), "[InternetShortcut]\r\nURL=" + new Uri(Path.Combine(target, "public", "guide.html")).AbsoluteUri + "\r\n");
+        File.Copy(Path.Combine(target, "RopiqUninstall.exe"), Path.Combine(group, "卸载 Ropiq.exe"), true);
+        string desktopLink = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Ropiq.lnk");
+        string desktopLauncher = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Ropiq.exe");
+        if (File.Exists(desktopLink)) File.Delete(desktopLink);
+        if (File.Exists(desktopLauncher)) File.Delete(desktopLauncher);
+        if (desktop) File.Copy(Path.Combine(target, "Ropiq.exe"), desktopLauncher, true);
     }
 
     private static void RegisterUninstaller(string target)
@@ -127,7 +137,7 @@ internal sealed class InstallForm : Form
         using (RegistryKey key = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Ropiq"))
         {
             key.SetValue("DisplayName", "Ropiq");
-            key.SetValue("DisplayVersion", "0.4.0-alpha.7");
+            key.SetValue("DisplayVersion", "0.4.0-alpha.10");
             key.SetValue("Publisher", "Ropiq Open Source Project");
             key.SetValue("InstallLocation", target);
             key.SetValue("UninstallString", "\"" + Path.Combine(target, "RopiqUninstall.exe") + "\"");
@@ -138,6 +148,19 @@ internal sealed class InstallForm : Form
 
     private static void StopServer(string target)
     {
+        string expectedLauncher = Path.Combine(target, "Ropiq.exe");
+        foreach (Process launcher in Process.GetProcessesByName("Ropiq"))
+        {
+            try
+            {
+                if (string.Equals(launcher.MainModule.FileName, expectedLauncher, StringComparison.OrdinalIgnoreCase))
+                {
+                    launcher.Kill();
+                    launcher.WaitForExit(5000);
+                }
+            }
+            catch { }
+        }
         string processFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ropiq", "server.json");
         if (!File.Exists(processFile)) return;
         try
