@@ -9,6 +9,8 @@ test("defines the complete drama pipeline and product workflow", () => {
   assert.equal(STUDIO_PIPELINES.drama.stages.length, 17);
   assert.deepEqual(STUDIO_PIPELINES.drama.stages.map((item) => item[1]), ["小说解析", "剧情改编", "分集剧本", "人物设定", "场景设定", "分镜", "景别/机位/运镜", "灯光材质", "提示词", "图像生成", "视频生成", "配音", "口型", "字幕/音效/音乐", "剪辑", "质检", "成片"]);
   assert.equal(STUDIO_PIPELINES.product.stages.length, 14);
+  assert.equal(STUDIO_PIPELINES.drama.stages.find(([id]) => id === "lip_sync")[2], "comfyui");
+  assert.deepEqual(STUDIO_PIPELINES.drama.stages.slice(-4).map((item) => item[2]), ["local:media", "local:media", "local:media", "local:media"]);
 });
 
 test("persists stage artifacts and invalidates downstream work", () => {

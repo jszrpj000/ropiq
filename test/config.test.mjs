@@ -26,14 +26,17 @@ test("persists guided settings without returning stored secrets", () => {
   saveSettings(dataRoot, {
     llm: { provider: "openai-compatible", baseUrl: "https://api.deepseek.com/v1", apiKey: "secret", model: "deepseek-chat" },
     backend: { baseUrl: "http://127.0.0.1:8188" },
+    media: { ffmpegPath: "C:\\Tools\\ffmpeg.exe" },
     extensions: { catalogUrl: "https://raw.githubusercontent.com/example/catalog/main/ropiq-catalog.json" },
     plugins: { cloudLifecycle: { statusUrl: "https://cloud.example/status", stopUrl: "https://cloud.example/stop", token: "cloud-secret" } },
   });
   const config = loadConfig(projectRoot, { ROPIQ_DATA_DIR: dataRoot }, {});
   assert.equal(config.llm.model, "deepseek-chat");
   assert.equal(config.llm.apiKey, "secret");
+  assert.equal(config.media.ffmpegPath, "C:\\Tools\\ffmpeg.exe");
   const safe = publicConfig(config);
   assert.equal(safe.llm.hasApiKey, true);
   assert.equal("apiKey" in safe.llm, false);
   assert.equal("token" in safe.plugins.cloudLifecycle, false);
+  assert.equal(safe.media.ffmpegPath, "C:\\Tools\\ffmpeg.exe");
 });

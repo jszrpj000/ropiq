@@ -15,11 +15,11 @@ const dramaStages = [
   ["image_generation", "图像生成", "comfyui", "生成关键帧和角色/场景参考图任务规格；优先低成本预览，再安排确认后的高质量任务。"],
   ["video_generation", "视频生成", "comfyui", "生成逐镜头视频任务规格，包含首尾帧、时长、帧率、动作幅度、一致性策略和失败降级方案。"],
   ["voice_synthesis", "配音", "comfyui", "结合场景、情绪原因和潜台词，生成角色声线、音量、语速、呼吸、停顿、重音、尾音、发音词典和逐句本地配音任务；不得冒用未经授权的真人声音。"],
-  ["lip_sync", "口型", "plugin:lipsync", "生成逐镜头口型任务，绑定音频、人物、说话区间、脸部可见度、修复策略和质量阈值。"],
-  ["audio_caption", "字幕/音效/音乐", "plugin:audio", "生成字幕时间轴、环境声、动作音效、音乐段落、响度和版权来源要求。"],
-  ["editing", "剪辑", "plugin:editor", "生成剪辑时间线，安排镜头、音轨、字幕、转场、节奏、调色、画幅安全区和平台版本。"],
-  ["quality_control", "质检", "llm", "检查剧情连续性、角色漂移、闪烁、口型、字幕、声音、版权、AI标识和技术指标，形成局部返工清单。"],
-  ["final_master", "成片", "plugin:editor", "生成最终交付任务规格、版本清单、封面、元数据、AI生成标识、校验值和归档清单。"],
+  ["lip_sync", "口型", "comfyui", "使用用户 ComfyUI 中受信任的 LongCat 本地模型生成逐镜头口型视频，绑定关键帧、配音、说话区间和质量阈值。"],
+  ["audio_caption", "字幕/音效/音乐", "local:media", "生成可执行字幕时间轴以及可选的已授权环境声、动作音效和音乐素材安排。"],
+  ["editing", "剪辑", "local:media", "使用本机媒体运行时执行镜头拼接、音轨混合、字幕烧录、画幅适配和平台剪辑版本。"],
+  ["quality_control", "质检", "local:media", "对剪辑成片执行解码完整性、文件和版权清单检查，并结合剧情、口型、字幕和声音要求形成返工报告。"],
+  ["final_master", "成片", "local:media", "转码最终交付成片，写入 AI 辅助制作标识，生成 SHA-256、版本和归档清单。"],
 ];
 
 const productStages = [
@@ -33,17 +33,26 @@ const productStages = [
   ["product_images", "商品图像", "comfyui", "生成商品增强、场景合成、关键帧和多画幅任务规格，优先保护包装与结构。"],
   ["product_video", "商品视频", "comfyui", "生成商品运镜、细节动画和场景视频任务规格，禁止改变产品真实属性。"],
   ["product_voice", "旁白配音", "comfyui", "结合商品场景和传播意图，生成旁白声线、音量、语速、呼吸、停顿、重音、尾音、发音和逐句本地配音任务。"],
-  ["product_audio_caption", "字幕/音效/音乐", "plugin:audio", "生成卖点字幕、价格占位、音效、音乐、响度和版权来源要求。"],
-  ["product_editing", "剪辑", "plugin:editor", "生成多平台剪辑时间线、品牌片尾、行动号召、横竖屏安全区和导出版本。"],
-  ["product_qc", "广告质检", "llm", "检查商品真实性、包装文字、宣传合规、品牌一致性、字幕、声音和技术质量。"],
-  ["product_delivery", "成片", "plugin:editor", "生成平台成片、封面、标题建议、AI标识、校验值和素材归档任务。"],
+  ["product_audio_caption", "字幕/音效/音乐", "local:media", "生成可执行卖点字幕以及可选的已授权音效、音乐和响度安排。"],
+  ["product_editing", "剪辑", "local:media", "使用本机媒体运行时执行多平台剪辑、旁白混合、字幕烧录、品牌片尾和画幅适配。"],
+  ["product_qc", "广告质检", "local:media", "执行成片解码完整性检查，并核对商品真实性、宣传合规、字幕、声音和技术质量。"],
+  ["product_delivery", "成片", "local:media", "转码平台成片，写入 AI 辅助制作标识，生成 SHA-256 和素材归档清单。"],
 ];
 
 const stageContextDependencies = {
   video_generation: ["episodic_scripts", "character_design", "scene_design", "storyboard", "cinematography", "look_development", "prompt_engineering", "image_generation"],
   voice_synthesis: ["episodic_scripts", "character_design", "storyboard", "video_generation"],
+  lip_sync: ["storyboard", "image_generation", "video_generation", "voice_synthesis"],
+  audio_caption: ["episodic_scripts", "storyboard", "voice_synthesis", "lip_sync"],
+  editing: ["storyboard", "lip_sync", "audio_caption"],
+  quality_control: ["editing", "audio_caption"],
+  final_master: ["editing", "quality_control"],
   product_video: ["ad_script", "product_storyboard", "product_cinematography", "product_lookdev", "product_prompts", "product_images"],
   product_voice: ["ad_script", "product_storyboard", "product_video"],
+  product_audio_caption: ["ad_script", "product_storyboard", "product_voice"],
+  product_editing: ["product_storyboard", "product_video", "product_voice", "product_audio_caption"],
+  product_qc: ["product_editing", "product_audio_caption"],
+  product_delivery: ["product_editing", "product_qc"],
 };
 
 function makeStages(definitions) {
@@ -173,6 +182,40 @@ export function compileStagePrompts(stageId, artifact) {
       job.voice_prompt.engine_instruction = compileVoiceEngineInstruction(job.voice_prompt, job);
     }
   }
+  if (stageId === "lip_sync") {
+    for (const job of artifact?.execution?.jobs || []) {
+      job.fps = Math.max(8, Math.min(30, Math.round(Number(job.fps) || 16)));
+      job.duration_seconds = Math.max(1, Math.min(30, Number(job.duration_seconds) || 4));
+      job.width = Math.max(256, Math.min(1920, Math.round(Number(job.width) || 1280)));
+      job.height = Math.max(256, Math.min(1920, Math.round(Number(job.height) || 720)));
+      job.positive_prompt = promptPart(job.positive_prompt || "成年虚构人物正对镜头自然说话，身份稳定，嘴唇清晰，轻微眨眼和头部动作");
+      job.negative_prompt = promptPart(job.negative_prompt || "模糊人脸，身份漂移，嘴部变形，牙齿异常，闪烁，抖动，文字，标志，水印");
+    }
+  }
+  if (["audio_caption", "product_audio_caption"].includes(stageId)) {
+    for (const job of artifact?.execution?.jobs || []) {
+      job.start_seconds = Math.max(0, Number(job.start_seconds) || 0);
+      job.end_seconds = Math.max(job.start_seconds + 0.2, Number(job.end_seconds) || job.start_seconds + 2);
+      job.text = promptPart(job.text);
+    }
+  }
+  if (["editing", "product_editing"].includes(stageId)) {
+    for (const job of artifact?.execution?.jobs || []) {
+      job.width = Math.max(256, Math.min(3840, Math.round(Number(job.width) || 1280)));
+      job.height = Math.max(256, Math.min(3840, Math.round(Number(job.height) || 720)));
+      job.fps = Math.max(8, Math.min(60, Math.round(Number(job.fps) || 24)));
+      job.burn_subtitles = job.burn_subtitles !== false;
+      job.music_asset_ref = promptPart(job.music_asset_ref);
+    }
+  }
+  if (["final_master", "product_delivery"].includes(stageId)) {
+    for (const job of artifact?.execution?.jobs || []) {
+      job.width = Math.max(256, Math.min(3840, Math.round(Number(job.width) || 1280)));
+      job.height = Math.max(256, Math.min(3840, Math.round(Number(job.height) || 720)));
+      job.fps = Math.max(8, Math.min(60, Math.round(Number(job.fps) || 24)));
+      job.filename = promptPart(job.filename || "ropiq-final.mp4");
+    }
+  }
   return artifact;
 }
 
@@ -220,6 +263,29 @@ export function validateStagePromptArtifact(stageId, artifact) {
         if (!Array.isArray(job?.voice_prompt?.[field])) errors.push(`${label} 缺少 voice_prompt.${field}`);
       }
     }
+  }
+  if (stageId === "lip_sync") {
+    const jobs = artifact?.execution?.jobs;
+    if (!Array.isArray(jobs) || jobs.length === 0) errors.push("口型阶段缺少 execution.jobs");
+    for (const [index, job] of (jobs || []).entries()) {
+      const label = `口型任务 ${index + 1}`;
+      for (const field of ["id", "shot_id", "image_ref", "audio_ref", "positive_prompt", "negative_prompt"]) if (!nonEmpty(job?.[field])) errors.push(`${label} 缺少 ${field}`);
+      for (const field of ["duration_seconds", "fps", "width", "height"]) if (!(Number(job?.[field]) > 0)) errors.push(`${label} 缺少有效 ${field}`);
+    }
+  }
+  if (["audio_caption", "product_audio_caption"].includes(stageId)) {
+    const jobs = artifact?.execution?.jobs;
+    if (!Array.isArray(jobs) || jobs.length === 0) errors.push("字幕阶段缺少 execution.jobs");
+    for (const [index, job] of (jobs || []).entries()) {
+      const label = `字幕 ${index + 1}`;
+      for (const field of ["id", "text"]) if (!nonEmpty(job?.[field])) errors.push(`${label} 缺少 ${field}`);
+      if (!(Number(job?.start_seconds) >= 0) || !(Number(job?.end_seconds) > Number(job?.start_seconds))) errors.push(`${label} 时间范围无效`);
+    }
+  }
+  if (["editing", "product_editing", "quality_control", "product_qc", "final_master", "product_delivery"].includes(stageId)) {
+    const jobs = artifact?.execution?.jobs;
+    if (!Array.isArray(jobs) || jobs.length === 0) errors.push(`${stageId} 缺少 execution.jobs`);
+    for (const [index, job] of (jobs || []).entries()) if (!nonEmpty(job?.id)) errors.push(`媒体任务 ${index + 1} 缺少 id`);
   }
   return { valid: errors.length === 0, errors };
 }

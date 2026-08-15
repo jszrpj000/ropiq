@@ -116,11 +116,17 @@
         </div>
       </section>
       <section class="form-section">
-        <div class="section-title"><span>02</span><div><strong>生成后端</strong><small>用户自行安装的节点图后端，可暂时跳过</small></div></div>
+        <div class="section-title"><span>02</span><div><strong>生成后端</strong><small>选择本机或算力云上的 ComfyUI，可暂时跳过</small></div></div>
+        <div class="backend-choice-grid" role="radiogroup" aria-label="ComfyUI 所在位置">
+          <label><input type="radio" name="backendLocation" value="local" checked><span><strong>这台电脑</strong><small>已在本机启动 ComfyUI</small></span></label>
+          <label><input type="radio" name="backendLocation" value="cloud"><span><strong>算力云</strong><small>已在云端启动 GPU 实例</small></span></label>
+        </div>
         <div class="form-grid"><label class="wide">后端地址<input name="backendBaseUrl" placeholder="http://127.0.0.1:8188"></label></div>
+        <div class="backend-guide"><strong id="backend-guide-title">本机连接方法</strong><p id="backend-guide-copy">先在浏览器打开 ComfyUI，再填写 http://127.0.0.1:8188。</p><a href="/guide.html" target="_blank" rel="noopener">打开完整图文式连接说明 →</a></div>
       </section>
-      <section class="form-section">
+      <section id="cloud-control-section" class="form-section" hidden>
         <div class="section-title"><span>03</span><div><strong>云实例控制</strong><small>填平台/自建网关提供的完整 API 地址；停止前始终确认</small></div></div>
+        <p class="section-help">只连接云端 ComfyUI 时，下列三项可以留空。只有算力平台另行提供状态/关机 API 时才填写，它们不是 ComfyUI 公网地址。</p>
         <div class="form-grid">
           <label class="wide">状态查询 URL<input name="cloudStatusUrl" placeholder="https://gateway.example/instances/abc"></label>
           <label class="wide">停止实例 URL<input name="cloudStopUrl" placeholder="https://gateway.example/instances/abc/stop"></label>
@@ -128,12 +134,18 @@
         </div>
       </section>
       <section class="form-section">
-        <div class="section-title"><span>04</span><div><strong>GitHub 扩展目录</strong><small>下载后核对哈希并扫描，陌生代码不会直接执行</small></div></div>
+        <div class="section-title"><span>04</span><div><strong>本机媒体工具（可选）</strong><small>公开安装包不捆绑 FFmpeg；本地剪辑时使用你自己合法取得的程序</small></div></div>
+        <div class="form-grid"><label class="wide">FFmpeg 完整路径<input name="ffmpegPath" placeholder="C:\\Tools\\ffmpeg\\bin\\ffmpeg.exe"></label></div>
+        <p class="section-help">只填写可信来源的 ffmpeg.exe 完整路径；留空不影响剧本、分镜和云端生成，只暂停本机剪辑、质检与成片阶段。<a href="/guide.html#media-tool" target="_blank" rel="noopener">查看合规配置说明</a></p>
+      </section>
+      <section class="form-section">
+        <div class="section-title"><span>05</span><div><strong>GitHub 扩展目录</strong><small>下载后核对哈希并扫描，陌生代码不会直接执行</small></div></div>
         <div class="form-grid"><label class="wide">目录 URL<input name="catalogUrl" placeholder="https://raw.githubusercontent.com/.../ropiq-catalog.json"></label></div>
       </section>
       <p id="setup-result" class="form-result"></p>
       <div class="modal-actions">
         <button type="button" id="test-llm" class="secondary">测试模型（调用一次 API）</button>
+        <button type="button" id="test-backend" class="secondary">测试生成后端</button>
         <button type="submit" class="primary">保存并进入</button>
       </div>
     </form>
@@ -204,10 +216,10 @@
                 <p id="studio-stage-instruction" class="studio-stage-instruction"></p>
                 <div id="studio-stage-capability" class="capability-note"></div>
                 <section id="studio-execution-panel" class="studio-execution-panel" hidden>
-                  <div class="execution-plan-head"><div><span class="header-kicker">VALIDATED GRAPH</span><strong id="studio-execution-title">待执行节点图</strong></div><span id="studio-execution-score" class="score">—</span></div>
+                  <div class="execution-plan-head"><div><span class="header-kicker">VALIDATED PLAN</span><strong id="studio-execution-title">待执行生产计划</strong></div><span id="studio-execution-score" class="score">—</span></div>
                   <p id="studio-execution-reply" class="muted"></p>
-                  <details><summary>查看节点图 JSON</summary><pre id="studio-execution-workflow"></pre></details>
-                  <div class="studio-execution-actions"><button id="studio-confirm-execution" type="button" class="primary">确认并发送到 ComfyUI</button></div>
+                  <details><summary>查看执行计划 JSON</summary><pre id="studio-execution-workflow"></pre></details>
+                  <div class="studio-execution-actions"><button id="studio-confirm-execution" type="button" class="primary">确认执行</button></div>
                 </section>
                 <label class="artifact-label">阶段产物（JSON，可直接修改）
                   <textarea id="studio-artifact" rows="20" spellcheck="false" placeholder="生成后会显示结构化阶段产物"></textarea>

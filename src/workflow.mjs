@@ -218,6 +218,7 @@ function boundedNumber(value, fallback, min, max) {
 }
 
 export const STUDIO_SOURCE_IMAGE_PLACEHOLDER = "__ROPIQ_SOURCE_IMAGE_AFTER_CONFIRMATION__";
+export const STUDIO_SOURCE_AUDIO_PLACEHOLDER = "__ROPIQ_SOURCE_AUDIO_AFTER_CONFIRMATION__";
 
 export function buildTrustedImageCandidate(objectInfo, artifact, outputPrefix) {
   const requiredNodes = ["UNETLoader", "ModelSamplingAuraFlow", "CLIPLoader", "CLIPTextEncode", "EmptySD3LatentImage", "KSampler", "VAELoader", "VAEDecode", "SaveImage"];
@@ -346,6 +347,144 @@ export function buildTrustedVoiceCandidate(objectInfo, artifact, outputPrefix) {
     title: "Qwen3-TTS 1.7B 本地自然配音预览",
     rationale: "固定角色音色与语言，使用稳定的本地 CustomVoice 节点和结构化表演指令，输出 FLAC；不调用外部语音 API。",
     workflow,
+  };
+}
+
+function asArray(value) {
+  if (value == null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function templateWidgetNames(info) {
+  const result = [];
+  for (const section of [info?.input?.required || {}, info?.input?.optional || {}]) {
+    for (const [name, spec] of Object.entries(section)) {
+      const type = spec?.[0];
+      const options = spec?.[1] || {};
+      if (!options.forceInput && (Array.isArray(type) || ["INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"].includes(type))) result.push(name);
+    }
+  }
+  return result;
+}
+
+function templateToApi(workflow, objectInfo) {
+  if (!Array.isArray(workflow?.nodes) || !Array.isArray(workflow?.links)) return null;
+  const nodes = new Map(workflow.nodes.map((node) => [String(node.id), node]));
+  const links = new Map(workflow.links.map((link) => [String(link[0]), link]));
+  const setters = new Map(workflow.nodes.filter((node) => node.type === "SetNode").map((node) => [String(asArray(node.widgets_values)[0]), node]));
+
+  function resolveOrigin(linkId, seen = new Set()) {
+    const key = String(linkId);
+    if (seen.has(key)) throw new Error(`LongCat 模板包含循环虚拟连线 ${key}`);
+    seen.add(key);
+    const link = links.get(key);
+    const origin = link ? nodes.get(String(link[1])) : null;
+    if (!link || !origin) throw new Error(`LongCat 模板缺少连线 ${key}`);
+    if (["GetNode", "Reroute"].includes(origin.type)) {
+      const sourceLink = origin.type === "GetNode"
+        ? asArray(setters.get(String(asArray(origin.widgets_values)[0]))?.inputs)[0]?.link
+        : asArray(origin.inputs)[0]?.link;
+      if (sourceLink == null) throw new Error(`LongCat 模板无法解析虚拟节点 ${origin.id}`);
+      return resolveOrigin(sourceLink, seen);
+    }
+    return [String(origin.id), Number(link[2])];
+  }
+
+  const prompt = {};
+  for (const node of workflow.nodes) {
+    const info = objectInfo?.[node.type];
+    if (!info || node.mode === 2 || node.mode === 4) continue;
+    const inputs = {};
+    if (node.widgets_values && !Array.isArray(node.widgets_values) && typeof node.widgets_values === "object") {
+      Object.assign(inputs, node.widgets_values);
+      delete inputs.videopreview;
+    } else {
+      const names = templateWidgetNames(info);
+      const values = asArray(node.widgets_values);
+      names.forEach((name, index) => { if (index < values.length && values[index] !== undefined) inputs[name] = values[index]; });
+    }
+    for (const input of asArray(node.inputs)) if (input?.link != null) inputs[input.name] = resolveOrigin(input.link);
+    prompt[String(node.id)] = { class_type: node.type, inputs };
+  }
+  return prompt;
+}
+
+function upstreamWorkflow(prompt, outputId) {
+  const keep = new Set();
+  function visit(id) {
+    const key = String(id);
+    if (keep.has(key)) return;
+    const node = prompt[key];
+    if (!node) throw new Error(`LongCat 模板缺少上游节点 ${key}`);
+    keep.add(key);
+    for (const value of Object.values(node.inputs || {})) if (Array.isArray(value) && value.length === 2 && prompt[String(value[0])]) visit(value[0]);
+  }
+  visit(outputId);
+  return Object.fromEntries(Object.entries(prompt).filter(([id]) => keep.has(id)));
+}
+
+export function buildTrustedLipSyncCandidate(objectInfo, template, artifact, outputPrefix) {
+  const prompt = templateToApi(template, objectInfo);
+  const requiredIds = ["122", "125", "129", "138", "194", "241", "284", "313", "320", "324", "438"];
+  if (!prompt || !requiredIds.every((id) => prompt[id])) return null;
+
+  function chooseFor(nodeId, input, patterns) {
+    const values = enumChoices(objectInfo, prompt[nodeId].class_type, input);
+    const value = pickChoice(values, patterns);
+    if (!value) return false;
+    prompt[nodeId].inputs[input] = value;
+    return true;
+  }
+
+  const choicesReady = [
+    chooseFor("122", "model", [/LongCat.*single.*fp8.*\.safetensors$/i, /LongCat.*\.safetensors$/i]),
+    chooseFor("129", "model_name", [/Wan2_1_VAE_bf16\.safetensors$/i, /Wan.*VAE.*\.safetensors$/i]),
+    chooseFor("138", "lora", [/LongCat.*distill.*lora.*\.safetensors$/i, /LongCat.*\.safetensors$/i]),
+    chooseFor("241", "model_name", [/umt5-xxl-enc-bf16\.safetensors$/i, /umt5.*\.safetensors$/i]),
+  ].every(Boolean);
+  if (!choicesReady) return null;
+
+  const job = artifact?.execution?.jobs?.[0] || artifact || {};
+  const fps = Math.round(boundedNumber(job.fps, 16, 8, 30));
+  let frames = Math.round(boundedNumber(job.duration_seconds, 4, 1, 30) * fps);
+  if (frames % 2 === 0) frames += 1;
+  frames = Math.max(17, Math.min(161, frames));
+  const width = Math.round(boundedNumber(job.width, 1280, 256, 1920) / 2) * 2;
+  const height = Math.round(boundedNumber(job.height, 720, 256, 1920) / 2) * 2;
+
+  prompt["241"].inputs.positive_prompt = String(job.positive_prompt || "An original fictional adult faces the camera and speaks naturally. Stable identity, sharp eyes, realistic skin texture, clear unobstructed lips, subtle blinking, minimal head motion, clean background, soft balanced lighting.").slice(0, 4000);
+  prompt["241"].inputs.negative_prompt = String(job.negative_prompt || "blurry face, identity drift, deformed mouth, bad teeth, flicker, jitter, subtitles, text, logo, watermark, low quality").slice(0, 4000);
+  prompt["284"].inputs.image = STUDIO_SOURCE_IMAGE_PLACEHOLDER;
+  prompt["125"].inputs.audio = STUDIO_SOURCE_AUDIO_PLACEHOLDER;
+  prompt["194"].inputs.audio_1 = ["125", 0];
+  prompt["438"].inputs.value = frames;
+  Object.assign(prompt["324"].inputs, { cfg: 1, seed: Math.round(boundedNumber(job.seed, 1, 0, Number.MAX_SAFE_INTEGER)), force_offload: true, add_noise_to_samples: false });
+
+  if (objectInfo?.UpscaleModelLoader && objectInfo?.ImageUpscaleWithModel && objectInfo?.ImageScale) {
+    const upscaler = pickChoice(enumChoices(objectInfo, "UpscaleModelLoader", "model_name"), [/RealESRGAN_x2\.pth$/i, /RealESRGAN.*\.pth$/i]);
+    if (upscaler) {
+      const crop = pickChoice(enumChoices(objectInfo, "ImageScale", "crop"), [/^center$/i, /^disabled$/i, /^none$/i]) || "center";
+      prompt["900"] = { class_type: "UpscaleModelLoader", inputs: { model_name: upscaler } };
+      prompt["901"] = { class_type: "ImageUpscaleWithModel", inputs: { upscale_model: ["900", 0], image: ["313", 0] } };
+      prompt["902"] = { class_type: "ImageScale", inputs: { image: ["901", 0], upscale_method: pickChoice(enumChoices(objectInfo, "ImageScale", "upscale_method"), [/^lanczos$/i, /^bicubic$/i]) || "lanczos", width, height, crop } };
+      prompt["320"].inputs.images = ["902", 0];
+    }
+  }
+  prompt["320"].inputs.audio = ["125", 0];
+  prompt["320"].inputs.frame_rate = fps;
+  prompt["320"].inputs.filename_prefix = outputPrefix;
+  prompt["320"].inputs.save_output = true;
+  prompt["320"].inputs.trim_to_audio = true;
+
+  const workflow = upstreamWorkflow(prompt, "320");
+  return {
+    title: "LongCat 本地清晰口型视频",
+    rationale: "读取用户 ComfyUI 自带的官方模板与本地 LongCat/Wan 模型，绑定经过确认的关键帧和配音，并在输出前执行清晰度放大；不调用外部口型 API。",
+    workflow,
+    sourceInputs: [
+      { nodeId: "284", inputName: "image", kind: "image", placeholder: STUDIO_SOURCE_IMAGE_PLACEHOLDER },
+      { nodeId: "125", inputName: "audio", kind: "audio", placeholder: STUDIO_SOURCE_AUDIO_PLACEHOLDER },
+    ],
   };
 }
 
